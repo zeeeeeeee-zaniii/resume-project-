@@ -346,6 +346,8 @@ export default function App() {
             onViewCandidateAnalysis={(analysis) => {
               setSelectedResult(analysis);
             }}
+            onUpdateCandidateStatus={handleUpdateCandidateStatus}
+            onUpdateCandidateNotes={handleUpdateCandidateNotes}
           />
         ) : selectedResult ? (
           <AnalysisResults

@@ -283,6 +283,7 @@ export async function saveCandidateToFirestore(candidate: CandidateRecord, user:
       analyzedAt: candidate.analyzedAt,
       notes: candidate.notes || '',
       status: candidate.status || 'New',
+      interviews: candidate.interviews || [],
       createdAt: candidate.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -350,6 +351,7 @@ export function subscribeToUserCandidates(
             analyzedAt: data.analyzedAt || 'Recent',
             notes: data.notes || '',
             status: data.status || 'New',
+            interviews: Array.isArray(data.interviews) ? data.interviews : [],
             createdAt: data.createdAt || new Date().toISOString(),
             updatedAt: data.updatedAt || new Date().toISOString(),
           });

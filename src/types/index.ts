@@ -29,6 +29,22 @@ export interface Job {
 export type CandidateStage = 'New' | 'Reviewed' | 'Shortlisted' | 'Interview' | 'Hired' | 'Rejected';
 export type CandidateStatus = CandidateStage | 'Screened' | 'Reviewing' | 'Archived';
 
+export type InterviewSlotStatus = 'Scheduled' | 'Completed' | 'Cancelled' | 'Rescheduled';
+
+export interface CandidateInterview {
+  id: string;
+  candidateId: string;
+  interviewType: 'Phone Screen' | 'Technical Round' | 'Hiring Manager' | 'Culture Fit' | 'Final Round';
+  interviewers: string[]; // List of names or corporate emails
+  scheduledAt: string; // ISO 8601 string or date-time representation
+  durationMinutes: number; // e.g. 30, 45, 60
+  meetingLinkOrLocation?: string; // Google Meet, Zoom, or office room
+  status: InterviewSlotStatus;
+  feedbackNotes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CandidateRecord {
   id: string;
   jobId: string;
@@ -43,6 +59,7 @@ export interface CandidateRecord {
   analyzedAt: string;
   notes?: string;
   status: CandidateStatus;
+  interviews?: CandidateInterview[];
   createdAt: string;
   updatedAt: string;
 }

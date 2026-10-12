@@ -6,3 +6,28 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Service account & credential files
+*service-account*.json
+*service_account*.json
+*credentials*.json
+gcp-key*.json
+google-credentials*.json
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local secret and token files
+*.secret
+*.token
+*secrets*.json
+*auth-token*.json
+
+# Sensitive uploaded files / candidate data
+uploads/
+temp/
+tmp/
+*.tmp
