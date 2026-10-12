@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: #0f172a;
+    background-color: #f8fafc;
+  }
+}
+
+.bg-mihora-grid {
+  background-size: 32px 32px;
+  background-image: 
+    linear-gradient(to right, rgba(203, 213, 225, 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(203, 213, 225, 0.35) 1px, transparent 1px);
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 12mm 12mm;
+  }
+
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html,
+  body {
+    background-color: #ffffff !important;
+    background-image: none !important;
+    color: #0f172a !important;
+    font-size: 9.5pt !important;
+    line-height: 1.4 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Exclude screen-only UI elements */
+  header,
+  footer,
+  nav,
+  button,
+  .print-hidden,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Force print blocks to display */
+  .print-only,
+  .print\:block {
+    display: block !important;
+  }
+
+  .print\:table-row {
+    display: table-row !important;
+  }
+
+  /* Prevent awkward page break splits on atomic cards, questions, and table rows */
+  .print-avoid-break,
+  .print-card,
+  tr,
+  .interview-q {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* Allow large containers and table bodies to break cleanly across pages */
+  .print-flow,
+  .print-table-container,
+  tbody {
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }
+
+  /* Ensure headings never orphan at bottom of a page */
+  h1, h2, h3, h4, h5, h6,
+  thead, th,
+  .print-heading {
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+  }
+
+  table {
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+    width: 100% !important;
+    border-collapse: collapse !important;
+    table-layout: fixed !important;
+    word-break: break-word !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  th {
+    font-size: 8.5pt !important;
+    font-weight: 600 !important;
+  }
+
+  td {
+    font-size: 9pt !important;
+    line-height: 1.4 !important;
+  }
+
+  /* Compact spacing for printed report elements to maximize A4 readability */
+  .print\:compact-card {
+    padding: 10px 14px !important;
+    margin-bottom: 8px !important;
+    border-radius: 6px !important;
+  }
+
+  /* Remove shadows in print output */
+  .shadow-2xs,
+  .shadow-xs,
+  .shadow-sm,
+  .shadow-md,
+  .shadow-lg,
+  .shadow-xl {
+    box-shadow: none !important;
+  }
+}

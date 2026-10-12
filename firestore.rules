@@ -1,0 +1,157 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Health / connection test document (read-only for boot diagnostics)
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // Security & validation primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Strict identity verification:
+    // Requires verified corporate email domain (@mihora.tech or @mihora.com)
+    // with email_verified flag strictly enforced
+    function hasVerifiedCompanyEmail() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && (
+          request.auth.token.email.matches('.*@mihora\\.tech$') ||
+          request.auth.token.email.matches('.*@mihora\\.com$')
+        );
+    }
+
+    // Server-side trusted membership lookup:
+    // Checks if the user's UID exists in the trusted company_members directory
+    function isRegisteredCompanyMember() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/company_members/$(request.auth.uid));
+    }
+
+    // Server-enforced company membership gate:
+    // User must have either a verified corporate domain email or be registered in the trusted members directory
+    function isCompanyMember() {
+      return hasVerifiedCompanyEmail() || isRegisteredCompanyMember();
+    }
+
+    // Authorizes individual document access for owner or verified company member
+    function canAccessRecord(recordUserId) {
+      return isOwner(recordUserId) || isCompanyMember();
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Trusted Company Membership Directory
+    // Clients can never write or tamper with this collection; must be managed via Admin SDK/backend
+    match /company_members/{memberId} {
+      allow get: if isSignedIn() && (request.auth.uid == memberId || hasVerifiedCompanyEmail());
+      allow list: if false;
+      allow write: if false;
+    }
+
+    // User Profile Collection: strictly isolated per user
+    match /users/{userId} {
+      allow get: if isOwner(userId) || (isCompanyMember() && exists(/databases/$(database)/documents/users/$(userId)));
+      allow list: if false;
+      allow create, update: if isOwner(userId)
+        && isValidId(userId)
+        && incoming().userId == request.auth.uid
+        && incoming().email is string
+        && incoming().email.size() <= 256;
+      allow delete: if false;
+    }
+
+    // Job Requisitions Collection
+    match /jobs/{jobId} {
+      allow get: if isSignedIn() && canAccessRecord(resource.data.userId);
+      // SECURE LIST QUERY: Users can ONLY list their own jobs.
+      // Every list query MUST include: where('userId', '==', request.auth.uid)
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn()
+        && isValidId(jobId)
+        && incoming().userId == request.auth.uid
+        && incoming().id is string
+        && incoming().id.size() <= 128
+        && incoming().title is string
+        && incoming().title.size() <= 200
+        && incoming().department is string
+        && incoming().department.size() <= 100;
+      allow update: if isSignedIn()
+        && isValidId(jobId)
+        && canAccessRecord(existing().userId)
+        && incoming().userId == existing().userId;
+      allow delete: if isSignedIn()
+        && isValidId(jobId)
+        && canAccessRecord(existing().userId);
+    }
+
+    // Candidates Collection
+    match /candidates/{candidateId} {
+      allow get: if isSignedIn() && canAccessRecord(resource.data.userId);
+      // SECURE LIST QUERY: Users can ONLY list their own candidates.
+      // Every list query MUST include: where('userId', '==', request.auth.uid)
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn()
+        && isValidId(candidateId)
+        && incoming().userId == request.auth.uid
+        && incoming().id is string
+        && incoming().id.size() <= 128
+        && incoming().jobId is string
+        && incoming().jobId.size() <= 128;
+      allow update: if isSignedIn()
+        && isValidId(candidateId)
+        && canAccessRecord(existing().userId)
+        && incoming().userId == existing().userId;
+      allow delete: if isSignedIn()
+        && isValidId(candidateId)
+        && canAccessRecord(existing().userId);
+    }
+
+    // Candidate Analysis Records Collection
+    match /analyses/{analysisId} {
+      allow get: if isSignedIn() && canAccessRecord(resource.data.userId);
+      // SECURE LIST QUERY: Users can ONLY list their own analyses.
+      // Every list query MUST include: where('userId', '==', request.auth.uid)
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn()
+        && isValidId(analysisId)
+        && incoming().userId == request.auth.uid
+        && incoming().id is string
+        && incoming().id.size() <= 128
+        && incoming().fileName is string
+        && incoming().fileName.size() <= 256
+        && incoming().jobTitle is string
+        && incoming().jobTitle.size() <= 200;
+      allow update: if isSignedIn()
+        && isValidId(analysisId)
+        && canAccessRecord(existing().userId)
+        && incoming().userId == existing().userId;
+      allow delete: if isSignedIn()
+        && isValidId(analysisId)
+        && canAccessRecord(existing().userId);
+    }
+  }
+}

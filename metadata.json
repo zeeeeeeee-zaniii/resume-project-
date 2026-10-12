@@ -1,0 +1,7 @@
+{
+  "name": "Mihora Resume Intelligence",
+  "description": "Evidence-based candidate resume screening and role alignment system for Mihora Tech talent operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

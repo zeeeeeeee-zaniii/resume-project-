@@ -1,0 +1,299 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Internal recruiter profile and account metadata.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Unique Firebase Authentication UID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Work email address of the recruiter."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Recruiter full name or display handle."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Account registration timestamp."
+        }
+      },
+      "required": ["userId", "email", "createdAt"]
+    },
+    "Job": {
+      "title": "Job",
+      "description": "Job requisition created by internal recruiters.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique job requisition ID."
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of the recruiter who owns this job requisition."
+        },
+        "title": {
+          "type": "string",
+          "description": "Job title of the requisition."
+        },
+        "department": {
+          "type": "string",
+          "description": "Department or team."
+        },
+        "description": {
+          "type": "string",
+          "description": "Full job description."
+        },
+        "responsibilities": {
+          "type": "string",
+          "description": "Optional specific responsibilities."
+        },
+        "requirements": {
+          "type": "string",
+          "description": "Optional specific qualifications and requirements."
+        },
+        "employmentType": {
+          "type": "string",
+          "description": "Employment type (e.g. Full-time, Contract)."
+        },
+        "location": {
+          "type": "string",
+          "description": "Target job location."
+        },
+        "workplaceType": {
+          "type": "string",
+          "description": "Remote, Hybrid, or On-site."
+        },
+        "status": {
+          "type": "string",
+          "description": "Requisition status.",
+          "enum": ["Open", "Closed"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update."
+        }
+      },
+      "required": ["id", "userId", "title", "department", "description", "status", "createdAt", "updatedAt"]
+    },
+    "Candidate": {
+      "title": "Candidate",
+      "description": "Candidate record associated with a job requisition and screening analysis.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique candidate record ID."
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Associated job requisition ID."
+        },
+        "jobTitle": {
+          "type": "string",
+          "description": "Job title at the time of evaluation."
+        },
+        "jobDepartment": {
+          "type": "string",
+          "description": "Department at the time of evaluation."
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of recruiter."
+        },
+        "name": {
+          "type": "string",
+          "description": "Detected candidate name."
+        },
+        "location": {
+          "type": "string",
+          "description": "Detected candidate location."
+        },
+        "currentRole": {
+          "type": "string",
+          "description": "Current or most recent role."
+        },
+        "alignmentLevel": {
+          "type": "string",
+          "description": "Screening alignment level."
+        },
+        "analysisId": {
+          "type": "string",
+          "description": "Linked analysis ID."
+        },
+        "analyzedAt": {
+          "type": "string",
+          "description": "Timestamp of screening."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Recruiter notes."
+        },
+        "status": {
+          "type": "string",
+          "description": "Recruiter workflow status."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Record creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Record update timestamp."
+        }
+      },
+      "required": ["id", "jobId", "userId", "name", "analysisId", "analyzedAt", "createdAt"]
+    },
+    "CandidateAnalysis": {
+      "title": "CandidateAnalysis",
+      "description": "Structured evidence-based screening analysis of candidate resume against role specifications.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique evaluation record ID."
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Associated job requisition ID if linked."
+        },
+        "candidateId": {
+          "type": "string",
+          "description": "Associated candidate record ID if linked."
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of the recruiter who conducted the analysis."
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Name of the uploaded resume document."
+        },
+        "candidateName": {
+          "type": "string",
+          "description": "Detected candidate name from resume, if found."
+        },
+        "candidateLocation": {
+          "type": "string",
+          "description": "Detected candidate location from resume, if found."
+        },
+        "jobTitle": {
+          "type": "string",
+          "description": "Target job title for the evaluated position."
+        },
+        "department": {
+          "type": "string",
+          "description": "Target department or team."
+        },
+        "extractedSummary": {
+          "type": "string",
+          "description": "Extracted summary of role requirements."
+        },
+        "alignmentLevel": {
+          "type": "string",
+          "description": "Qualitative role alignment level.",
+          "enum": [
+            "Strong alignment",
+            "Good alignment",
+            "Moderate alignment",
+            "Limited evidence",
+            "Insufficient evidence"
+          ]
+        },
+        "alignmentSummary": {
+          "type": "string",
+          "description": "Qualitative rationale for overall alignment."
+        },
+        "hasLimitedInformation": {
+          "type": "boolean",
+          "description": "Flag indicating if resume contains sparse information."
+        },
+        "analyzedAt": {
+          "type": "string",
+          "description": "Human-readable timestamp of when analysis occurred."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Server timestamp of record persistence."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "fileName",
+        "jobTitle",
+        "alignmentLevel",
+        "analyzedAt",
+        "createdAt"
+      ]
+    },
+    "CompanyMember": {
+      "title": "CompanyMember",
+      "description": "Trusted internal Mihora employee record for authorized recruitment access.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Authentication UID of the verified member."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Corporate email address of the verified member."
+        },
+        "role": {
+          "type": "string",
+          "description": "Role within Mihora (e.g., recruiter, hiring_manager, admin).",
+          "enum": ["recruiter", "hiring_manager", "admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of authorization."
+        }
+      },
+      "required": ["userId", "email", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/company_members/{memberId}": {
+      "schema": {
+        "$ref": "#/entities/CompanyMember"
+      },
+      "description": "Directory of trusted company members for server-enforced access control."
+    },
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Recruiter profile records isolated by user ID."
+    },
+    "/jobs/{jobId}": {
+      "schema": {
+        "$ref": "#/entities/Job"
+      },
+      "description": "Job requisitions managed by authenticated recruiters."
+    },
+    "/candidates/{candidateId}": {
+      "schema": {
+        "$ref": "#/entities/Candidate"
+      },
+      "description": "Candidate records linked to job requisitions."
+    },
+    "/analyses/{analysisId}": {
+      "schema": {
+        "$ref": "#/entities/CandidateAnalysis"
+      },
+      "description": "Persistent candidate screening evaluations created by authenticated recruiters."
+    }
+  }
+}
