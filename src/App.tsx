@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TabType, AnalysisResult, ResumeFile, Job, CandidateRecord } from './types';
+import { TabType, AnalysisResult, ResumeFile, Job, CandidateRecord, CandidateOutreachLog } from './types';
 import { Header, MihoraLogo } from './components/Header';
 import { Dashboard } from './components/Dashboard';
 import { CeoDashboard } from './components/CeoDashboard';
@@ -209,10 +209,10 @@ export default function App() {
 
   // Delete Analysis Record
   const handleDeleteAnalysis = async (analysisId: string) => {
-    // Find candidate record pointing to this analysis
-    const matchingCand = candidatesList.find((c) => c.analysisId === analysisId);
+    // Find candidate record pointing to this analysis or matching id
+    const matchingCand = candidatesList.find((c) => c.analysisId === analysisId || c.id === analysisId);
     if (matchingCand) {
-      await deleteCandidateFromFirestore(matchingCand.id, analysisId);
+      await deleteCandidateFromFirestore(matchingCand.id, matchingCand.analysisId || analysisId);
     } else {
       await deleteAnalysisFromFirestore(analysisId);
     }
@@ -221,38 +221,288 @@ export default function App() {
   };
 
   // Delete Candidate Record directly
-  const handleDeleteCandidate = async (analysisId: string) => {
-    const matchingCand = candidatesList.find((c) => c.analysisId === analysisId);
+  const handleDeleteCandidate = async (candidateIdOrAnalysisId: string) => {
+    const matchingCand = candidatesList.find(
+      (c) => c.id === candidateIdOrAnalysisId || c.analysisId === candidateIdOrAnalysisId
+    );
     if (matchingCand) {
-      await deleteCandidateFromFirestore(matchingCand.id, analysisId);
+      await deleteCandidateFromFirestore(matchingCand.id, matchingCand.analysisId || candidateIdOrAnalysisId);
     } else {
-      await deleteAnalysisFromFirestore(analysisId);
+      await deleteAnalysisFromFirestore(candidateIdOrAnalysisId);
     }
-    if (selectedResult && selectedResult.id === analysisId) {
+    if (selectedResult && (selectedResult.id === candidateIdOrAnalysisId || selectedResult.candidateId === candidateIdOrAnalysisId)) {
       setSelectedResult(null);
     }
   };
 
-  // Update Candidate Notes
-  const handleUpdateCandidateNotes = async (candidateId: string, notes: string) => {
-    await updateCandidateInFirestore(candidateId, { notes });
+  // Update Candidate Notes (resolves both candidateId and analysisId)
+  const handleUpdateCandidateNotes = async (candidateIdOrAnalysisId: string, notes: string) => {
+    let targetCandidate = candidatesList.find(
+      (c) => c.id === candidateIdOrAnalysisId || c.analysisId === candidateIdOrAnalysisId
+    );
+
+    if (!targetCandidate) {
+      const matchAnalysis = analysesList.find(
+        (a) => a.id === candidateIdOrAnalysisId || a.candidateId === candidateIdOrAnalysisId
+      );
+      if (matchAnalysis?.candidateId) {
+        targetCandidate = candidatesList.find((c) => c.id === matchAnalysis.candidateId);
+      }
+    }
+
+    if (targetCandidate) {
+      await updateCandidateInFirestore(targetCandidate.id, { notes });
+      setCandidatesList((prev) =>
+        prev.map((c) =>
+          c.id === targetCandidate!.id
+            ? { ...c, notes, updatedAt: new Date().toISOString() }
+            : c
+        )
+      );
+    } else {
+      const matchingAnalysis = analysesList.find(
+        (a) => a.id === candidateIdOrAnalysisId || a.candidateId === candidateIdOrAnalysisId
+      );
+      if (matchingAnalysis && currentUser) {
+        const matchingJob = jobsList.find((j) => j.id === matchingAnalysis.jobId);
+        const candidateDocId =
+          matchingAnalysis.candidateId && /^[a-zA-Z0-9_-]+$/.test(matchingAnalysis.candidateId)
+            ? matchingAnalysis.candidateId
+            : `cand-${matchingAnalysis.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+        const newRecord: CandidateRecord = {
+          id: candidateDocId,
+          jobId: matchingAnalysis.jobId || matchingJob?.id || '',
+          jobTitle: matchingJob?.title || matchingAnalysis.roleSummary.jobTitle,
+          jobDepartment: matchingJob?.department || matchingAnalysis.roleSummary.department,
+          userId: currentUser.uid,
+          name: matchingAnalysis.candidateOverview.detectedName || matchingAnalysis.fileName,
+          location: matchingAnalysis.candidateOverview.detectedLocation,
+          currentRole: matchingAnalysis.candidateOverview.currentOrRecentRole,
+          alignmentLevel: matchingAnalysis.overallRoleAlignment.level,
+          analysisId: matchingAnalysis.id,
+          analyzedAt: matchingAnalysis.analyzedAt,
+          status: 'New',
+          notes,
+          interviews: [],
+          outreachLogs: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        await saveCandidateToFirestore(newRecord, currentUser);
+        matchingAnalysis.candidateId = candidateDocId;
+        setCandidatesList((prev) => {
+          const exists = prev.some((c) => c.id === newRecord.id || c.analysisId === newRecord.analysisId);
+          return exists ? prev.map((c) => (c.id === newRecord.id ? newRecord : c)) : [newRecord, ...prev];
+        });
+      }
+    }
+  };
+
+  // Update Candidate Interviews (resolves both candidateId and analysisId)
+  const handleUpdateCandidateInterviews = async (
+    candidateIdOrAnalysisId: string,
+    interviews: CandidateRecord['interviews']
+  ) => {
+    let targetCandidate = candidatesList.find(
+      (c) => c.id === candidateIdOrAnalysisId || c.analysisId === candidateIdOrAnalysisId
+    );
+
+    if (!targetCandidate) {
+      const matchAnalysis = analysesList.find(
+        (a) => a.id === candidateIdOrAnalysisId || a.candidateId === candidateIdOrAnalysisId
+      );
+      if (matchAnalysis?.candidateId) {
+        targetCandidate = candidatesList.find((c) => c.id === matchAnalysis.candidateId);
+      }
+    }
+
+    if (targetCandidate) {
+      await updateCandidateInFirestore(targetCandidate.id, { interviews });
+      setCandidatesList((prev) =>
+        prev.map((c) =>
+          c.id === targetCandidate!.id
+            ? { ...c, interviews, updatedAt: new Date().toISOString() }
+            : c
+        )
+      );
+    } else {
+      const matchingAnalysis = analysesList.find(
+        (a) => a.id === candidateIdOrAnalysisId || a.candidateId === candidateIdOrAnalysisId
+      );
+      if (matchingAnalysis && currentUser) {
+        const matchingJob = jobsList.find((j) => j.id === matchingAnalysis.jobId);
+        const candidateDocId =
+          matchingAnalysis.candidateId && /^[a-zA-Z0-9_-]+$/.test(matchingAnalysis.candidateId)
+            ? matchingAnalysis.candidateId
+            : `cand-${matchingAnalysis.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+        const newRecord: CandidateRecord = {
+          id: candidateDocId,
+          jobId: matchingAnalysis.jobId || matchingJob?.id || '',
+          jobTitle: matchingJob?.title || matchingAnalysis.roleSummary.jobTitle,
+          jobDepartment: matchingJob?.department || matchingAnalysis.roleSummary.department,
+          userId: currentUser.uid,
+          name: matchingAnalysis.candidateOverview.detectedName || matchingAnalysis.fileName,
+          location: matchingAnalysis.candidateOverview.detectedLocation,
+          currentRole: matchingAnalysis.candidateOverview.currentOrRecentRole,
+          alignmentLevel: matchingAnalysis.overallRoleAlignment.level,
+          analysisId: matchingAnalysis.id,
+          analyzedAt: matchingAnalysis.analyzedAt,
+          status: 'Interview',
+          interviews: interviews || [],
+          outreachLogs: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        await saveCandidateToFirestore(newRecord, currentUser);
+        matchingAnalysis.candidateId = candidateDocId;
+        setCandidatesList((prev) => {
+          const exists = prev.some((c) => c.id === newRecord.id || c.analysisId === newRecord.analysisId);
+          return exists ? prev.map((c) => (c.id === newRecord.id ? newRecord : c)) : [newRecord, ...prev];
+        });
+      }
+    }
+  };
+
+  // Log Candidate Outreach
+  const handleSaveCandidateOutreachLog = async (
+    candidateIdOrAnalysisId: string,
+    log: CandidateOutreachLog
+  ) => {
+    if (!currentUser) {
+      throw new Error('Authentication required to save candidate outreach.');
+    }
+
+    // Sanitize log to guarantee no undefined fields are passed to Firestore
+    const sanitizedLog: CandidateOutreachLog = {
+      id: log.id || `outreach-${Date.now()}`,
+      templateType: log.templateType,
+      subject: log.subject?.trim() || 'Outreach Communication',
+      sentAt: log.sentAt || new Date().toISOString(),
+      senderName: log.senderName?.trim() || (currentUser.displayName || currentUser.email?.split('@')[0] || 'Recruiter'),
+      ...(log.recipientEmail?.trim() ? { recipientEmail: log.recipientEmail.trim() } : {}),
+      ...(log.notes?.trim() ? { notes: log.notes.trim() } : {}),
+    };
+
+    // 1. Locate existing candidate record by ID or by analysisId
+    let targetCandidate = candidatesList.find(
+      (c) => c.id === candidateIdOrAnalysisId || c.analysisId === candidateIdOrAnalysisId
+    );
+
+    // If not found directly, check if candidateIdOrAnalysisId matches an analysis that points to a candidateId
+    if (!targetCandidate) {
+      const matchAnalysis = analysesList.find(
+        (a) => a.id === candidateIdOrAnalysisId || a.candidateId === candidateIdOrAnalysisId
+      );
+      if (matchAnalysis?.candidateId) {
+        targetCandidate = candidatesList.find((c) => c.id === matchAnalysis.candidateId);
+      }
+    }
+
+    if (targetCandidate) {
+      const existingLogs = Array.isArray(targetCandidate.outreachLogs) ? targetCandidate.outreachLogs : [];
+      const updatedLogs = [sanitizedLog, ...existingLogs];
+
+      await updateCandidateInFirestore(targetCandidate.id, { outreachLogs: updatedLogs });
+
+      // Optimistically update candidate in state
+      setCandidatesList((prev) =>
+        prev.map((c) =>
+          c.id === targetCandidate!.id
+            ? { ...c, outreachLogs: updatedLogs, updatedAt: new Date().toISOString() }
+            : c
+        )
+      );
+    } else {
+      // Candidate doc does not exist yet; create from matching analysis
+      const matchingAnalysis = analysesList.find(
+        (a) => a.id === candidateIdOrAnalysisId || a.candidateId === candidateIdOrAnalysisId
+      );
+
+      if (matchingAnalysis) {
+        const matchingJob = jobsList.find((j) => j.id === matchingAnalysis.jobId);
+        // Use deterministic document ID to prevent duplicate candidate records
+        const candidateDocId =
+          matchingAnalysis.candidateId && /^[a-zA-Z0-9_-]+$/.test(matchingAnalysis.candidateId)
+            ? matchingAnalysis.candidateId
+            : `cand-${matchingAnalysis.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+        const newRecord: CandidateRecord = {
+          id: candidateDocId,
+          jobId: matchingAnalysis.jobId || matchingJob?.id || '',
+          jobTitle: matchingJob?.title || matchingAnalysis.roleSummary.jobTitle,
+          jobDepartment: matchingJob?.department || matchingAnalysis.roleSummary.department,
+          userId: currentUser.uid,
+          name: matchingAnalysis.candidateOverview.detectedName || matchingAnalysis.fileName,
+          location: matchingAnalysis.candidateOverview.detectedLocation,
+          currentRole: matchingAnalysis.candidateOverview.currentOrRecentRole,
+          alignmentLevel: matchingAnalysis.overallRoleAlignment.level,
+          analysisId: matchingAnalysis.id,
+          analyzedAt: matchingAnalysis.analyzedAt,
+          status: 'New',
+          outreachLogs: [sanitizedLog],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        await saveCandidateToFirestore(newRecord, currentUser);
+
+        // Update analysis reference
+        matchingAnalysis.candidateId = candidateDocId;
+
+        // Optimistically update candidatesList to prevent duplicates
+        setCandidatesList((prev) => {
+          const exists = prev.some((c) => c.id === newRecord.id || c.analysisId === newRecord.analysisId);
+          return exists ? prev.map((c) => (c.id === newRecord.id ? newRecord : c)) : [newRecord, ...prev];
+        });
+      } else {
+        throw new Error(`Candidate or analysis record not found for ID: ${candidateIdOrAnalysisId}`);
+      }
+    }
   };
 
   // Update Candidate Pipeline Status
   const handleUpdateCandidateStatus = async (candidateIdOrAnalysisId: string, status: CandidateRecord['status']) => {
-    const targetCandidate = candidatesList.find(
+    let targetCandidate = candidatesList.find(
       (c) => c.id === candidateIdOrAnalysisId || c.analysisId === candidateIdOrAnalysisId
     );
+
+    if (!targetCandidate) {
+      const matchAnalysis = analysesList.find(
+        (a) => a.id === candidateIdOrAnalysisId || a.candidateId === candidateIdOrAnalysisId
+      );
+      if (matchAnalysis?.candidateId) {
+        targetCandidate = candidatesList.find((c) => c.id === matchAnalysis.candidateId);
+      }
+    }
+
     if (targetCandidate) {
       await updateCandidateInFirestore(targetCandidate.id, { status });
+      setCandidatesList((prev) =>
+        prev.map((c) =>
+          c.id === targetCandidate!.id
+            ? { ...c, status, updatedAt: new Date().toISOString() }
+            : c
+        )
+      );
     } else {
       // Find matching analysis if candidate doc doesn't exist yet in Firestore
-      const matchingAnalysis = analysesList.find((a) => a.id === candidateIdOrAnalysisId);
+      const matchingAnalysis = analysesList.find(
+        (a) => a.id === candidateIdOrAnalysisId || a.candidateId === candidateIdOrAnalysisId
+      );
       if (matchingAnalysis && currentUser) {
         const matchingJob = jobsList.find((j) => j.id === matchingAnalysis.jobId);
+        const candidateDocId =
+          matchingAnalysis.candidateId && /^[a-zA-Z0-9_-]+$/.test(matchingAnalysis.candidateId)
+            ? matchingAnalysis.candidateId
+            : `cand-${matchingAnalysis.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
         const newRecord: CandidateRecord = {
-          id: `cand-${Date.now()}`,
-          jobId: matchingAnalysis.jobId || '',
+          id: candidateDocId,
+          jobId: matchingAnalysis.jobId || matchingJob?.id || '',
           jobTitle: matchingJob?.title || matchingAnalysis.roleSummary.jobTitle,
           jobDepartment: matchingJob?.department || matchingAnalysis.roleSummary.department,
           userId: currentUser.uid,
@@ -263,10 +513,18 @@ export default function App() {
           analysisId: matchingAnalysis.id,
           analyzedAt: matchingAnalysis.analyzedAt,
           status,
+          interviews: [],
+          outreachLogs: [],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
+
         await saveCandidateToFirestore(newRecord, currentUser);
+        matchingAnalysis.candidateId = candidateDocId;
+        setCandidatesList((prev) => {
+          const exists = prev.some((c) => c.id === newRecord.id || c.analysisId === newRecord.analysisId);
+          return exists ? prev.map((c) => (c.id === newRecord.id ? newRecord : c)) : [newRecord, ...prev];
+        });
       }
     }
   };
@@ -348,10 +606,18 @@ export default function App() {
             }}
             onUpdateCandidateStatus={handleUpdateCandidateStatus}
             onUpdateCandidateNotes={handleUpdateCandidateNotes}
+            currentUserEmail={currentUser?.email || undefined}
+            currentUserName={currentUser?.displayName || undefined}
+            onSaveCandidateOutreach={handleSaveCandidateOutreachLog}
           />
         ) : selectedResult ? (
           <AnalysisResults
             result={selectedResult}
+            candidateRecord={candidatesList.find(c => c.analysisId === selectedResult.id || c.id === selectedResult.id)}
+            jobs={jobsList}
+            currentUserEmail={currentUser?.email || undefined}
+            currentUserName={currentUser?.displayName || undefined}
+            onSaveOutreachLog={handleSaveCandidateOutreachLog}
             onModifyInputs={() => {
               setSelectedResult(null);
               setActiveTab('new-analysis');
@@ -433,6 +699,10 @@ export default function App() {
                 onDeleteCandidate={handleDeleteCandidate}
                 onUpdateCandidateNotes={handleUpdateCandidateNotes}
                 onUpdateCandidateStatus={handleUpdateCandidateStatus}
+                onUpdateCandidateInterviews={handleUpdateCandidateInterviews}
+                currentUserEmail={currentUser?.email || undefined}
+                currentUserName={currentUser?.displayName || undefined}
+                onSaveCandidateOutreach={handleSaveCandidateOutreachLog}
                 onCompareCandidates={(selected) => setCandidatesToCompare(selected)}
               />
             )}

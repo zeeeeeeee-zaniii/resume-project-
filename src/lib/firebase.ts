@@ -127,6 +127,26 @@ export async function saveUserProfile(user: User) {
   }
 }
 
+// Sanitize objects to prevent Firestore "Unsupported field value: undefined" errors
+export function cleanUndefinedFields<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => cleanUndefinedFields(item)) as unknown as T;
+  }
+  if (typeof obj === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = cleanUndefinedFields(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return obj;
+}
+
 /* =========================================================================
    JOB REQUISITIONS CRUD
    ========================================================================= */
@@ -135,7 +155,7 @@ export async function saveUserProfile(user: User) {
 export async function saveJobToFirestore(job: Job, user: User) {
   const path = `jobs/${job.id}`;
   try {
-    const payload = {
+    const payload = cleanUndefinedFields({
       id: job.id,
       userId: user.uid,
       title: job.title.trim(),
@@ -149,7 +169,7 @@ export async function saveJobToFirestore(job: Job, user: User) {
       status: job.status || 'Open',
       createdAt: job.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    };
+    });
 
     await setDoc(doc(db, 'jobs', job.id), payload);
   } catch (error) {
@@ -161,10 +181,11 @@ export async function saveJobToFirestore(job: Job, user: User) {
 export async function updateJobInFirestore(jobId: string, updates: Partial<Job>) {
   const path = `jobs/${jobId}`;
   try {
-    await updateDoc(doc(db, 'jobs', jobId), {
+    const payload = cleanUndefinedFields({
       ...updates,
       updatedAt: new Date().toISOString(),
     });
+    await updateDoc(doc(db, 'jobs', jobId), payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -266,10 +287,12 @@ export function subscribeToUserJobs(
    CANDIDATE RECORDS CRUD
    ========================================================================= */
 
+
+
 export async function saveCandidateToFirestore(candidate: CandidateRecord, user: User) {
   const path = `candidates/${candidate.id}`;
   try {
-    const payload = {
+    const payload = cleanUndefinedFields({
       id: candidate.id,
       jobId: candidate.jobId,
       jobTitle: candidate.jobTitle,
@@ -284,9 +307,10 @@ export async function saveCandidateToFirestore(candidate: CandidateRecord, user:
       notes: candidate.notes || '',
       status: candidate.status || 'New',
       interviews: candidate.interviews || [],
+      outreachLogs: candidate.outreachLogs || [],
       createdAt: candidate.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    };
+    });
 
     await setDoc(doc(db, 'candidates', candidate.id), payload);
   } catch (error) {
@@ -297,10 +321,11 @@ export async function saveCandidateToFirestore(candidate: CandidateRecord, user:
 export async function updateCandidateInFirestore(candidateId: string, updates: Partial<CandidateRecord>) {
   const path = `candidates/${candidateId}`;
   try {
-    await updateDoc(doc(db, 'candidates', candidateId), {
+    const payload = cleanUndefinedFields({
       ...updates,
       updatedAt: new Date().toISOString(),
     });
+    await updateDoc(doc(db, 'candidates', candidateId), payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -352,6 +377,7 @@ export function subscribeToUserCandidates(
             notes: data.notes || '',
             status: data.status || 'New',
             interviews: Array.isArray(data.interviews) ? data.interviews : [],
+            outreachLogs: Array.isArray(data.outreachLogs) ? data.outreachLogs : [],
             createdAt: data.createdAt || new Date().toISOString(),
             updatedAt: data.updatedAt || new Date().toISOString(),
           });

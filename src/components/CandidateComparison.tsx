@@ -20,9 +20,11 @@ import {
   FileText,
   Printer,
   Edit3,
-  Loader2
+  Loader2,
+  Mail
 } from 'lucide-react';
-import { AnalysisResult, CandidateRecord, Job, CandidateStage, MatchStatus, getNormalizedStage, PIPELINE_STAGES } from '../types';
+import { AnalysisResult, CandidateRecord, Job, CandidateStage, MatchStatus, getNormalizedStage, PIPELINE_STAGES, CandidateOutreachLog } from '../types';
+import { CandidateOutreachModal } from './CandidateOutreachModal';
 
 interface CandidateComparisonProps {
   candidates: AnalysisResult[];
@@ -32,6 +34,9 @@ interface CandidateComparisonProps {
   onViewCandidateAnalysis: (analysis: AnalysisResult) => void;
   onUpdateCandidateStatus?: (candidateIdOrAnalysisId: string, status: CandidateRecord['status']) => Promise<void>;
   onUpdateCandidateNotes?: (candidateId: string, notes: string) => Promise<void>;
+  currentUserEmail?: string;
+  currentUserName?: string;
+  onSaveCandidateOutreach?: (candidateIdOrAnalysisId: string, log: CandidateOutreachLog) => Promise<void>;
 }
 
 export const CandidateComparison: React.FC<CandidateComparisonProps> = ({
@@ -42,10 +47,18 @@ export const CandidateComparison: React.FC<CandidateComparisonProps> = ({
   onViewCandidateAnalysis,
   onUpdateCandidateStatus,
   onUpdateCandidateNotes,
+  currentUserEmail,
+  currentUserName,
+  onSaveCandidateOutreach,
 }) => {
   const [filterCriteria, setFilterCriteria] = useState<'all' | 'differing'>('all');
   const [updatingCandidateId, setUpdatingCandidateId] = useState<string | null>(null);
   const [statusUpdateError, setStatusUpdateError] = useState<string | null>(null);
+
+  // Candidate Outreach modal state
+  const [outreachCandidate, setOutreachCandidate] = useState<CandidateRecord | null>(null);
+  const [outreachCandidateAnalysis, setOutreachCandidateAnalysis] = useState<AnalysisResult | null>(null);
+  const [isOutreachModalOpen, setIsOutreachModalOpen] = useState(false);
 
   // Edit notes state
   const [editingCandidate, setEditingCandidate] = useState<CandidateRecord | null>(null);
@@ -264,8 +277,12 @@ export const CandidateComparison: React.FC<CandidateComparisonProps> = ({
             <button
               type="button"
               onClick={() => {
-                if (typeof window !== 'undefined' && typeof window.print === 'function') {
-                  window.print();
+                try {
+                  if (typeof window !== 'undefined' && typeof window.print === 'function') {
+                    window.print();
+                  }
+                } catch (printErr) {
+                  console.warn('Browser printing restricted by sandbox frame:', printErr);
                 }
               }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg shadow-2xs transition-colors cursor-pointer print:hidden"
@@ -404,6 +421,19 @@ export const CandidateComparison: React.FC<CandidateComparisonProps> = ({
                           {currentStage}
                         </span>
                       )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOutreachCandidateAnalysis(cand);
+                          setOutreachCandidate(matchingRecord || null);
+                          setIsOutreachModalOpen(true);
+                        }}
+                        className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors"
+                        title="Draft grounded candidate outreach email"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                      </button>
 
                       {onUpdateCandidateNotes && (
                         <button
@@ -763,6 +793,24 @@ export const CandidateComparison: React.FC<CandidateComparisonProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Candidate Outreach Modal */}
+      {isOutreachModalOpen && outreachCandidateAnalysis && (
+        <CandidateOutreachModal
+          isOpen={isOutreachModalOpen}
+          onClose={() => {
+            setIsOutreachModalOpen(false);
+            setOutreachCandidate(null);
+            setOutreachCandidateAnalysis(null);
+          }}
+          candidateAnalysis={outreachCandidateAnalysis}
+          candidateRecord={outreachCandidate}
+          jobs={jobs}
+          currentUserEmail={currentUserEmail}
+          currentUserName={currentUserName}
+          onSaveOutreachLog={onSaveCandidateOutreach}
+        />
       )}
     </div>
   );

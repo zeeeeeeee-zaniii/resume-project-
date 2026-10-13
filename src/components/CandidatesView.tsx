@@ -24,7 +24,11 @@ import {
   UserCheck,
   XCircle,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Video,
+  Plus,
+  CalendarDays,
+  Mail
 } from 'lucide-react';
 import { 
   AnalysisResult, 
@@ -32,9 +36,14 @@ import {
   Job, 
   CandidateStage, 
   CandidateStatus, 
+  CandidateInterview,
+  CandidateOutreachLog,
+  OutreachTemplateType,
+  InterviewSlotStatus,
   getNormalizedStage, 
   PIPELINE_STAGES 
 } from '../types';
+import { CandidateOutreachModal } from './CandidateOutreachModal';
 
 interface CandidatesViewProps {
   candidates: AnalysisResult[];
@@ -45,6 +54,10 @@ interface CandidatesViewProps {
   onDeleteCandidate?: (analysisId: string) => Promise<void>;
   onUpdateCandidateNotes?: (candidateId: string, notes: string) => Promise<void>;
   onUpdateCandidateStatus?: (candidateIdOrAnalysisId: string, status: CandidateRecord['status']) => Promise<void>;
+  onUpdateCandidateInterviews?: (candidateIdOrAnalysisId: string, interviews: CandidateInterview[]) => Promise<void>;
+  currentUserEmail?: string;
+  currentUserName?: string;
+  onSaveCandidateOutreach?: (candidateIdOrAnalysisId: string, log: CandidateOutreachLog) => Promise<void>;
   onCompareCandidates?: (selectedCandidates: AnalysisResult[]) => void;
   initialViewMode?: 'list' | 'pipeline';
 }
@@ -58,6 +71,10 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
   onDeleteCandidate,
   onUpdateCandidateNotes,
   onUpdateCandidateStatus,
+  onUpdateCandidateInterviews,
+  currentUserEmail,
+  currentUserName,
+  onSaveCandidateOutreach,
   onCompareCandidates,
   initialViewMode = 'list',
 }) => {
@@ -74,6 +91,31 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
   // Status updating state feedback
   const [updatingCandidateId, setUpdatingCandidateId] = useState<string | null>(null);
   const [statusUpdateError, setStatusUpdateError] = useState<string | null>(null);
+
+  // Candidate Outreach Modal state
+  const [outreachCandidate, setOutreachCandidate] = useState<CandidateRecord | null>(null);
+  const [outreachCandidateAnalysis, setOutreachCandidateAnalysis] = useState<AnalysisResult | null>(null);
+  const [isOutreachModalOpen, setIsOutreachModalOpen] = useState(false);
+  const [outreachInitialTemplate, setOutreachInitialTemplate] = useState<OutreachTemplateType>('interview_invitation');
+
+  const handleOpenOutreach = (cand: AnalysisResult, initialType?: OutreachTemplateType) => {
+    const rec = getCandidateRecord(cand);
+    setOutreachCandidateAnalysis(cand);
+    setOutreachCandidate(rec || null);
+    const stage = getCandidateCurrentStage(cand);
+    if (initialType) {
+      setOutreachInitialTemplate(initialType);
+    } else if (stage === 'Interview') {
+      setOutreachInitialTemplate('interview_invitation');
+    } else if (stage === 'Rejected') {
+      setOutreachInitialTemplate('rejection');
+    } else if (stage === 'Reviewed') {
+      setOutreachInitialTemplate('clarification_request');
+    } else {
+      setOutreachInitialTemplate('screening_followup');
+    }
+    setIsOutreachModalOpen(true);
+  };
 
   // Deletion modal state
   const [deletingCandidateId, setDeletingCandidateId] = useState<string | null>(null);
@@ -93,6 +135,26 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
   const [editingCandidateAnalysis, setEditingCandidateAnalysis] = useState<AnalysisResult | null>(null);
   const [candidateNotes, setCandidateNotes] = useState('');
   const [isSavingNotes, setIsSavingNotes] = useState(false);
+
+  // Interview Management Modal state
+  const [interviewCandidate, setInterviewCandidate] = useState<CandidateRecord | null>(null);
+  const [interviewCandidateAnalysis, setInterviewCandidateAnalysis] = useState<AnalysisResult | null>(null);
+  const [isSavingInterview, setIsSavingInterview] = useState(false);
+  const [interviewError, setInterviewError] = useState<string | null>(null);
+
+  // New Interview Form state
+  const [isAddingNewRound, setIsAddingNewRound] = useState(false);
+  const [newInterviewType, setNewInterviewType] = useState<CandidateInterview['interviewType']>('Technical Round');
+  const [newScheduledAt, setNewScheduledAt] = useState('');
+  const [newDurationMinutes, setNewDurationMinutes] = useState(45);
+  const [newInterviewers, setNewInterviewers] = useState('');
+  const [newMeetingLink, setNewMeetingLink] = useState('');
+  const [newFeedbackNotes, setNewFeedbackNotes] = useState('');
+
+  // Editing existing round notes/status state
+  const [editingInterviewId, setEditingInterviewId] = useState<string | null>(null);
+  const [editingStatus, setEditingStatus] = useState<InterviewSlotStatus>('Scheduled');
+  const [editingNotes, setEditingNotes] = useState('');
 
   // Helper to resolve candidate record from candidate analysis
   const getCandidateRecord = (cand: AnalysisResult): CandidateRecord | undefined => {
@@ -181,6 +243,128 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
     } else {
       setEditingCandidate(null);
       setCandidateNotes('');
+    }
+  };
+
+  const handleOpenInterviewModal = (cand: AnalysisResult) => {
+    const matchingRecord = getCandidateRecord(cand);
+    setInterviewCandidateAnalysis(cand);
+    setInterviewCandidate(matchingRecord || null);
+    setIsAddingNewRound(false);
+    setInterviewError(null);
+    setEditingInterviewId(null);
+    // Default scheduled time: tomorrow at 10:00 AM local time
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(10, 0, 0, 0);
+    // Format to YYYY-MM-DDTHH:mm
+    const tzOffset = tomorrow.getTimezoneOffset() * 60000;
+    const localISOTime = new Date(tomorrow.getTime() - tzOffset).toISOString().slice(0, 16);
+    setNewScheduledAt(localISOTime);
+    setNewInterviewType('Technical Round');
+    setNewDurationMinutes(45);
+    setNewInterviewers('');
+    setNewMeetingLink('');
+    setNewFeedbackNotes('');
+  };
+
+  const handleCreateInterviewRound = async () => {
+    if (!onUpdateCandidateInterviews) return;
+    if (!newScheduledAt) {
+      setInterviewError('Please select an interview date and time.');
+      return;
+    }
+    const interviewersList = newInterviewers
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (interviewersList.length === 0) {
+      setInterviewError('Please specify at least one interviewer name or email.');
+      return;
+    }
+
+    setInterviewError(null);
+    setIsSavingInterview(true);
+    try {
+      const candidateId = interviewCandidate?.id || interviewCandidateAnalysis?.id;
+      if (!candidateId) return;
+
+      const currentInterviews = interviewCandidate?.interviews || [];
+      const newRound: CandidateInterview = {
+        id: `int-${Date.now()}`,
+        candidateId,
+        interviewType: newInterviewType,
+        interviewers: interviewersList,
+        scheduledAt: new Date(newScheduledAt).toISOString(),
+        durationMinutes: Number(newDurationMinutes) || 45,
+        meetingLinkOrLocation: newMeetingLink.trim() || undefined,
+        status: 'Scheduled',
+        feedbackNotes: newFeedbackNotes.trim() || undefined,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const updatedInterviews = [...currentInterviews, newRound];
+      await onUpdateCandidateInterviews(candidateId, updatedInterviews);
+      
+      // Update local candidate record reference
+      if (interviewCandidate) {
+        setInterviewCandidate({
+          ...interviewCandidate,
+          interviews: updatedInterviews,
+        });
+      }
+      setIsAddingNewRound(false);
+      setNewInterviewers('');
+      setNewMeetingLink('');
+      setNewFeedbackNotes('');
+    } catch (err: any) {
+      console.error('Create interview error:', err);
+      setInterviewError('Failed to save interview round. Please check your connection.');
+    } finally {
+      setIsSavingInterview(false);
+    }
+  };
+
+  const handleUpdateInterviewRoundStatus = async (
+    interviewId: string,
+    newStatus: InterviewSlotStatus,
+    feedbackNotes?: string
+  ) => {
+    if (!onUpdateCandidateInterviews) return;
+    setIsSavingInterview(true);
+    setInterviewError(null);
+    try {
+      const candidateId = interviewCandidate?.id || interviewCandidateAnalysis?.id;
+      if (!candidateId) return;
+
+      const currentInterviews = interviewCandidate?.interviews || [];
+      const updatedInterviews = currentInterviews.map((item) => {
+        if (item.id === interviewId) {
+          return {
+            ...item,
+            status: newStatus,
+            feedbackNotes: feedbackNotes !== undefined ? feedbackNotes : item.feedbackNotes,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return item;
+      });
+
+      await onUpdateCandidateInterviews(candidateId, updatedInterviews);
+      if (interviewCandidate) {
+        setInterviewCandidate({
+          ...interviewCandidate,
+          interviews: updatedInterviews,
+        });
+      }
+      setEditingInterviewId(null);
+    } catch (err: any) {
+      console.error('Update interview round error:', err);
+      setInterviewError('Failed to update interview round.');
+    } finally {
+      setIsSavingInterview(false);
     }
   };
 
@@ -313,6 +497,33 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
       case 'Rejected':
         return <XCircle className="w-3.5 h-3.5 text-rose-600" />;
     }
+  };
+
+  const getInterviewStatusBadgeStyle = (status: InterviewSlotStatus) => {
+    switch (status) {
+      case 'Scheduled':
+        return 'bg-purple-50 text-purple-700 border-purple-200';
+      case 'Completed':
+        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case 'Cancelled':
+        return 'bg-rose-50 text-rose-700 border-rose-200';
+      case 'Rescheduled':
+        return 'bg-amber-50 text-amber-700 border-amber-200';
+      default:
+        return 'bg-slate-50 text-slate-700 border-slate-200';
+    }
+  };
+
+  const getNextUpcomingInterview = (interviews?: CandidateInterview[]): CandidateInterview | null => {
+    if (!interviews || interviews.length === 0) return null;
+    // Find active scheduled or rescheduled interview closest in future, or latest scheduled
+    const activeRounds = interviews
+      .filter((i) => i.status === 'Scheduled' || i.status === 'Rescheduled')
+      .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
+
+    if (activeRounds.length > 0) return activeRounds[0];
+    // If no active, return latest completed or cancelled
+    return [...interviews].sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime())[0];
   };
 
   return (
@@ -693,6 +904,47 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                               </div>
                             </div>
 
+                            {/* Next Upcoming Interview Badge (if candidate has scheduled rounds) */}
+                            {(() => {
+                              const nextInterview = getNextUpcomingInterview(matchingRecord?.interviews);
+                              if (!nextInterview) return null;
+                              const interviewDate = new Date(nextInterview.scheduledAt);
+                              const formattedDate = isNaN(interviewDate.getTime())
+                                ? nextInterview.scheduledAt
+                                : interviewDate.toLocaleDateString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  });
+
+                              return (
+                                <div className="p-2 rounded-md bg-purple-50/70 border border-purple-200/80 space-y-1">
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    <span className="font-bold text-purple-900 flex items-center gap-1">
+                                      <Calendar className="w-3 h-3 text-purple-600" />
+                                      <span>{nextInterview.interviewType}</span>
+                                    </span>
+                                    <span
+                                      className={`px-1.5 py-0.2 rounded text-[9px] font-semibold border ${getInterviewStatusBadgeStyle(
+                                        nextInterview.status
+                                      )}`}
+                                    >
+                                      {nextInterview.status}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-purple-800 flex items-center justify-between">
+                                    <span className="font-mono">{formattedDate} ({nextInterview.durationMinutes}m)</span>
+                                    {nextInterview.interviewers?.length > 0 && (
+                                      <span className="truncate max-w-[120px] text-purple-700" title={nextInterview.interviewers.join(', ')}>
+                                        w/ {nextInterview.interviewers[0]}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
                             {/* Recruiter Notes Excerpt */}
                             {matchingRecord?.notes && (
                               <div className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded border border-slate-200/80 leading-relaxed font-sans line-clamp-2">
@@ -734,7 +986,7 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                             </div>
 
                             {/* Card Footer Quick Actions */}
-                            <div className="flex items-center justify-between pt-1 text-xs">
+                            <div className="flex items-center justify-between pt-1 text-xs gap-1.5">
                               <div className="flex items-center gap-1">
                                 <button
                                   type="button"
@@ -756,14 +1008,49 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                                 )}
                               </div>
 
-                              <button
-                                type="button"
-                                onClick={() => onSelectCandidate(cand)}
-                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 px-2 py-1 rounded border border-blue-200 transition-colors"
-                              >
-                                <span>Report</span>
-                                <ArrowRight className="w-3 h-3" />
-                              </button>
+                              <div className="flex items-center gap-1">
+                                {/* Interview Scheduling Action (Available for candidates in Interview stage or any candidate with interviews) */}
+                                {(currentStage === 'Interview' || (matchingRecord?.interviews && matchingRecord.interviews.length > 0)) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenInterviewModal(cand)}
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-1 rounded transition-colors cursor-pointer"
+                                    title="Schedule or manage candidate interviews"
+                                  >
+                                    <Calendar className="w-3 h-3 text-purple-600" />
+                                    <span>
+                                      {matchingRecord?.interviews && matchingRecord.interviews.length > 0
+                                        ? `Interviews (${matchingRecord.interviews.length})`
+                                        : 'Schedule'}
+                                    </span>
+                                  </button>
+                                )}
+
+                                {/* Candidate Outreach Email Action */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenOutreach(cand)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded transition-colors cursor-pointer"
+                                  title="Draft grounded outreach email (Interview, Clarification, Rejection)"
+                                >
+                                  <Mail className="w-3 h-3 text-blue-600" />
+                                  <span>Outreach</span>
+                                  {matchingRecord?.outreachLogs && matchingRecord.outreachLogs.length > 0 && (
+                                    <span className="text-[9px] bg-blue-200 text-blue-900 px-1 rounded-full font-mono font-bold">
+                                      {matchingRecord.outreachLogs.length}
+                                    </span>
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => onSelectCandidate(cand)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 px-2 py-1 rounded border border-blue-200 transition-colors cursor-pointer"
+                                >
+                                  <span>Report</span>
+                                  <ArrowRight className="w-3 h-3" />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         );
@@ -936,6 +1223,33 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                             <span>Screened: {cand.analyzedAt}</span>
                           </div>
 
+                          {/* Next Upcoming Interview Snippet in Registry Row */}
+                          {(() => {
+                            const nextInterview = getNextUpcomingInterview(matchingRecord?.interviews);
+                            if (!nextInterview) return null;
+                            const interviewDate = new Date(nextInterview.scheduledAt);
+                            const formattedDate = isNaN(interviewDate.getTime())
+                              ? nextInterview.scheduledAt
+                              : interviewDate.toLocaleDateString(undefined, {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                });
+
+                            return (
+                              <div className="flex items-center gap-2 text-xs text-purple-900 bg-purple-50/80 border border-purple-200/80 px-2.5 py-1 rounded-md">
+                                <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                <span className="font-semibold">{nextInterview.interviewType}</span>
+                                <span>·</span>
+                                <span className="font-mono text-[11px] text-purple-700">{formattedDate} ({nextInterview.durationMinutes}m)</span>
+                                <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold border ${getInterviewStatusBadgeStyle(nextInterview.status)}`}>
+                                  {nextInterview.status}
+                                </span>
+                              </div>
+                            );
+                          })()}
+
                           {matchingRecord?.notes && (
                             <div className="text-xs text-slate-600 bg-slate-50 p-2 rounded border border-slate-200/80 font-sans">
                               <span className="font-semibold text-slate-700">Notes:</span> {matchingRecord.notes}
@@ -953,6 +1267,40 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                             {notDetectedCount} unevidenced
                           </span>
                         </div>
+
+                        {/* Interview Scheduling Action (Available for candidates in Interview stage or any candidate with interviews) */}
+                        {(currentStage === 'Interview' || (matchingRecord?.interviews && matchingRecord.interviews.length > 0)) && (
+                          <button
+                            onClick={() => handleOpenInterviewModal(cand)}
+                            className="p-1.5 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded transition-colors"
+                            title={
+                              matchingRecord?.interviews && matchingRecord.interviews.length > 0
+                                ? `Manage interviews (${matchingRecord.interviews.length} rounds)`
+                                : 'Schedule interview'
+                            }
+                          >
+                            <Calendar className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        {/* Candidate Outreach Action */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenOutreach(cand)}
+                          className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors relative"
+                          title={
+                            matchingRecord?.outreachLogs && matchingRecord.outreachLogs.length > 0
+                              ? `Draft outreach (${matchingRecord.outreachLogs.length} logged)`
+                              : 'Draft candidate outreach email'
+                          }
+                        >
+                          <Mail className="w-4 h-4" />
+                          {matchingRecord?.outreachLogs && matchingRecord.outreachLogs.length > 0 && (
+                            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 text-[8px] bg-blue-600 text-white font-bold rounded-full flex items-center justify-center">
+                              {matchingRecord.outreachLogs.length}
+                            </span>
+                          )}
+                        </button>
 
                         {onUpdateCandidateNotes && (
                           <button
@@ -1090,6 +1438,440 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* =========================================================================
+          INTERVIEW SCHEDULING & MANAGEMENT MODAL
+         ========================================================================= */}
+      {(interviewCandidate || interviewCandidateAnalysis) && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-2xl w-full my-8 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-purple-100 text-purple-700">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Interview Schedule & Status
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Candidate:{' '}
+                    <strong className="text-slate-800">
+                      {interviewCandidate?.name || interviewCandidateAnalysis?.candidateOverview.detectedName || interviewCandidateAnalysis?.fileName || 'Candidate'}
+                    </strong>{' '}
+                    · Requisition:{' '}
+                    <span className="text-slate-700">
+                      {interviewCandidate?.jobTitle || interviewCandidateAnalysis?.roleSummary.jobTitle}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setInterviewCandidate(null);
+                  setInterviewCandidateAnalysis(null);
+                  setIsAddingNewRound(false);
+                  setEditingInterviewId(null);
+                  setInterviewError(null);
+                }}
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-md hover:bg-slate-200/60 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error Alert */}
+            {interviewError && (
+              <div className="mx-5 mt-4 p-3 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-between text-xs text-rose-800">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{interviewError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setInterviewError(null)}
+                  className="text-rose-600 hover:text-rose-800 font-bold ml-2 text-xs"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Modal Body: Scrollable */}
+            <div className="p-5 space-y-6 overflow-y-auto flex-1 text-xs">
+              {/* Top Action Bar: Add Round Toggle */}
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">
+                    Scheduled Rounds ({interviewCandidate?.interviews?.length || 0})
+                  </span>
+                </div>
+
+                {!isAddingNewRound && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingNewRound(true);
+                      setInterviewError(null);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-purple-700 hover:bg-purple-800 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Log New Round</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Form: Add New Interview Round */}
+              {isAddingNewRound && (
+                <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/40 space-y-4 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between border-b border-purple-100 pb-2">
+                    <span className="font-bold text-purple-900 text-xs flex items-center gap-1.5">
+                      <CalendarDays className="w-4 h-4 text-purple-600" />
+                      <span>Schedule New Interview Round</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNewRound(false)}
+                      className="text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Interview Type */}
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700 block text-[11px]">
+                        Round Type *
+                      </label>
+                      <select
+                        value={newInterviewType}
+                        onChange={(e) => setNewInterviewType(e.target.value as CandidateInterview['interviewType'])}
+                        className="w-full p-2 bg-white border border-slate-300 rounded-md focus:border-purple-600 focus:outline-hidden text-xs"
+                      >
+                        <option value="Phone Screen">Phone Screen (Recruiter)</option>
+                        <option value="Technical Round">Technical Round / Coding</option>
+                        <option value="Hiring Manager">Hiring Manager Debrief</option>
+                        <option value="Culture Fit">Culture Fit / Values</option>
+                        <option value="Final Round">Final Round / Executive</option>
+                      </select>
+                    </div>
+
+                    {/* Date and Time */}
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700 block text-[11px]">
+                        Date & Start Time *
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={newScheduledAt}
+                        onChange={(e) => setNewScheduledAt(e.target.value)}
+                        className="w-full p-2 bg-white border border-slate-300 rounded-md focus:border-purple-600 focus:outline-hidden text-xs font-mono"
+                      />
+                    </div>
+
+                    {/* Duration in minutes */}
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700 block text-[11px]">
+                        Duration (Minutes)
+                      </label>
+                      <select
+                        value={newDurationMinutes}
+                        onChange={(e) => setNewDurationMinutes(Number(e.target.value))}
+                        className="w-full p-2 bg-white border border-slate-300 rounded-md focus:border-purple-600 focus:outline-hidden text-xs"
+                      >
+                        <option value={30}>30 minutes</option>
+                        <option value={45}>45 minutes</option>
+                        <option value={60}>60 minutes</option>
+                        <option value={90}>90 minutes</option>
+                      </select>
+                    </div>
+
+                    {/* Interviewers */}
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700 block text-[11px]">
+                        Interviewers * (Comma separated)
+                      </label>
+                      <input
+                        type="text"
+                        value={newInterviewers}
+                        onChange={(e) => setNewInterviewers(e.target.value)}
+                        placeholder="e.g. Sarah Jenkins (Tech Lead), David Kim"
+                        className="w-full p-2 bg-white border border-slate-300 rounded-md focus:border-purple-600 focus:outline-hidden text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Meeting Link or Location */}
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700 block text-[11px]">
+                      Meeting Link or Office Location
+                    </label>
+                    <div className="relative">
+                      <Video className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                      <input
+                        type="text"
+                        value={newMeetingLink}
+                        onChange={(e) => setNewMeetingLink(e.target.value)}
+                        placeholder="e.g. https://meet.google.com/abc-defg-hij or Conference Room 4B"
+                        className="w-full pl-8 p-2 bg-white border border-slate-300 rounded-md focus:border-purple-600 focus:outline-hidden text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Initial Focus / Debrief notes */}
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700 block text-[11px]">
+                      Initial Focus or Debrief Notes
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={newFeedbackNotes}
+                      onChange={(e) => setNewFeedbackNotes(e.target.value)}
+                      placeholder="e.g. Focus on system architecture and cloud integration experience..."
+                      className="w-full p-2 bg-white border border-slate-300 rounded-md focus:border-purple-600 focus:outline-hidden text-xs resize-none"
+                    />
+                  </div>
+
+                  {/* Form Actions */}
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNewRound(false)}
+                      disabled={isSavingInterview}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200/50 rounded-md"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreateInterviewRound}
+                      disabled={isSavingInterview}
+                      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-purple-700 hover:bg-purple-800 rounded-md shadow-2xs disabled:opacity-60 cursor-pointer"
+                    >
+                      {isSavingInterview && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>{isSavingInterview ? 'Saving Round...' : 'Confirm Schedule'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Chronological List of Interview Rounds */}
+              {(!interviewCandidate?.interviews || interviewCandidate.interviews.length === 0) ? (
+                <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-xl space-y-3 bg-slate-50/50">
+                  <div className="w-10 h-10 mx-auto rounded-full bg-purple-50 text-purple-600 flex items-center justify-center">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="font-semibold text-slate-800 text-xs">
+                      No interview rounds logged yet
+                    </p>
+                    <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                      Schedule phone screens, technical evaluations, or hiring manager rounds to coordinate hiring team reviews.
+                    </p>
+                  </div>
+                  {!isAddingNewRound && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNewRound(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Log First Interview Round</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {[...interviewCandidate.interviews]
+                    .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+                    .map((round, idx) => {
+                      const isEditingThisRound = editingInterviewId === round.id;
+                      const roundDate = new Date(round.scheduledAt);
+                      const formattedDate = isNaN(roundDate.getTime())
+                        ? round.scheduledAt
+                        : roundDate.toLocaleDateString(undefined, {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          });
+
+                      return (
+                        <div
+                          key={round.id}
+                          className="p-4 rounded-xl border border-slate-200 bg-white hover:border-slate-300 shadow-2xs space-y-3 transition-colors"
+                        >
+                          {/* Round Header */}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-900 text-xs">
+                                  Round {idx + 1}: {round.interviewType}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${getInterviewStatusBadgeStyle(
+                                    round.status
+                                  )}`}
+                                >
+                                  {round.status}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 font-mono flex items-center gap-2">
+                                <span>{formattedDate}</span>
+                                <span>·</span>
+                                <span>{round.durationMinutes} min</span>
+                              </div>
+                            </div>
+
+                            {/* Status Quick Toggle Button */}
+                            {!isEditingThisRound && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingInterviewId(round.id);
+                                  setEditingStatus(round.status);
+                                  setEditingNotes(round.feedbackNotes || '');
+                                }}
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-2 py-1 rounded transition-colors"
+                              >
+                                <Edit3 className="w-3 h-3 text-slate-500" />
+                                <span>Update Status</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Interviewers & Location */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                            <div>
+                              <span className="font-semibold text-slate-700">Interviewers:</span>{' '}
+                              <span>{round.interviewers?.join(', ') || 'Not specified'}</span>
+                            </div>
+                            {round.meetingLinkOrLocation && (
+                              <div className="truncate">
+                                <span className="font-semibold text-slate-700">Location:</span>{' '}
+                                <span className="font-mono text-[10px]">{round.meetingLinkOrLocation}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Debrief & Feedback Notes */}
+                          {round.feedbackNotes && !isEditingThisRound && (
+                            <div className="text-[11px] text-slate-600 bg-white p-2.5 rounded border border-slate-200/80 leading-relaxed font-sans">
+                              <span className="font-bold text-slate-700 block mb-0.5">Debrief Notes:</span>
+                              <p>{round.feedbackNotes}</p>
+                            </div>
+                          )}
+
+                          {/* In-Place Status & Feedback Editing */}
+                          {isEditingThisRound && (
+                            <div className="pt-2 border-t border-slate-100 space-y-3 bg-slate-50/60 p-3 rounded-lg border border-slate-200">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <label className="font-semibold text-slate-700 text-[11px] block">
+                                    Round Outcome Status:
+                                  </label>
+                                  <select
+                                    value={editingStatus}
+                                    onChange={(e) => setEditingStatus(e.target.value as InterviewSlotStatus)}
+                                    className="w-full p-1.5 bg-white border border-slate-300 rounded text-xs focus:border-purple-600 focus:outline-hidden"
+                                  >
+                                    <option value="Scheduled">Scheduled</option>
+                                    <option value="Completed">Completed (Passed)</option>
+                                    <option value="Rescheduled">Rescheduled</option>
+                                    <option value="Cancelled">Cancelled</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="font-semibold text-slate-700 text-[11px] block">
+                                  Debrief / Interviewer Feedback Notes:
+                                </label>
+                                <textarea
+                                  rows={3}
+                                  value={editingNotes}
+                                  onChange={(e) => setEditingNotes(e.target.value)}
+                                  placeholder="Document interview questions covered, candidate responses, technical evaluation, and recommendations..."
+                                  className="w-full p-2 bg-white border border-slate-300 rounded text-xs focus:border-purple-600 focus:outline-hidden resize-none"
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-end gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingInterviewId(null)}
+                                  disabled={isSavingInterview}
+                                  className="px-3 py-1 text-xs text-slate-600 hover:bg-slate-200/50 rounded"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateInterviewRoundStatus(round.id, editingStatus, editingNotes)}
+                                  disabled={isSavingInterview}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-purple-700 hover:bg-purple-800 rounded shadow-2xs disabled:opacity-60 cursor-pointer"
+                                >
+                                  {isSavingInterview && <Loader2 className="w-3 h-3 animate-spin" />}
+                                  <span>Save Changes</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50/80 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                All rounds persist securely to candidate records in Firestore.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setInterviewCandidate(null);
+                  setInterviewCandidateAnalysis(null);
+                  setIsAddingNewRound(false);
+                  setEditingInterviewId(null);
+                  setInterviewError(null);
+                }}
+                className="px-4 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-2xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Candidate Outreach Modal */}
+      {isOutreachModalOpen && outreachCandidateAnalysis && (
+        <CandidateOutreachModal
+          isOpen={isOutreachModalOpen}
+          onClose={() => {
+            setIsOutreachModalOpen(false);
+            setOutreachCandidate(null);
+            setOutreachCandidateAnalysis(null);
+          }}
+          candidateAnalysis={outreachCandidateAnalysis}
+          candidateRecord={outreachCandidate}
+          jobs={jobs}
+          currentUserEmail={currentUserEmail}
+          currentUserName={currentUserName}
+          onSaveOutreachLog={onSaveCandidateOutreach}
+          initialTemplateType={outreachInitialTemplate}
+        />
       )}
     </div>
   );

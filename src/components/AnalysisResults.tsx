@@ -21,14 +21,21 @@ import {
   Trash2,
   ChevronLeft,
   Download,
-  ExternalLink
+  ExternalLink,
+  Mail
 } from 'lucide-react';
-import { AnalysisResult, MatchStatus } from '../types';
+import { AnalysisResult, MatchStatus, CandidateRecord, Job, CandidateOutreachLog } from '../types';
+import { CandidateOutreachModal } from './CandidateOutreachModal';
 import { downloadPrintableReport } from '../lib/report-export';
 import { generateCandidatePdfReport } from '../lib/pdf-report-generator';
 
 interface AnalysisResultsProps {
   result: AnalysisResult;
+  candidateRecord?: CandidateRecord | null;
+  jobs?: Job[];
+  currentUserEmail?: string;
+  currentUserName?: string;
+  onSaveOutreachLog?: (candidateIdOrAnalysisId: string, log: CandidateOutreachLog) => Promise<void>;
   onModifyInputs: () => void;
   onStartNewAnalysis: () => void;
   onReanalyze?: (result: AnalysisResult) => void;
@@ -39,6 +46,11 @@ interface AnalysisResultsProps {
 
 export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   result,
+  candidateRecord,
+  jobs = [],
+  currentUserEmail,
+  currentUserName,
+  onSaveOutreachLog,
   onModifyInputs,
   onStartNewAnalysis,
   onReanalyze,
@@ -52,6 +64,7 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   const [printNotice, setPrintNotice] = useState<{ type: 'info' | 'error'; message: string } | null>(null);
   const [isPrintableView, setIsPrintableView] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isOutreachModalOpen, setIsOutreachModalOpen] = useState(false);
 
   // Reliable detection of sandboxed AI Studio preview iframe:
   // Must be embedded inside an iframe (window.self !== window.top) AND running on an AI Studio preview/dev domain or applet frame.
@@ -637,6 +650,21 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
 
           <button
             type="button"
+            onClick={() => setIsOutreachModalOpen(true)}
+            title="Draft personalized, grounded candidate email outreach"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors shadow-2xs cursor-pointer"
+          >
+            <Mail className="w-3.5 h-3.5" />
+            <span>Draft Outreach</span>
+            {candidateRecord?.outreachLogs && candidateRecord.outreachLogs.length > 0 && (
+              <span className="text-[9px] bg-blue-200 text-blue-800 font-bold px-1 rounded-full">
+                {candidateRecord.outreachLogs.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={handleDownloadPdf}
             disabled={isGeneratingPdf}
             title="Download structured PDF analysis report for offline recruiter review"
@@ -1122,6 +1150,20 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Candidate Outreach Modal */}
+      {isOutreachModalOpen && (
+        <CandidateOutreachModal
+          isOpen={isOutreachModalOpen}
+          onClose={() => setIsOutreachModalOpen(false)}
+          candidateAnalysis={result}
+          candidateRecord={candidateRecord}
+          jobs={jobs}
+          currentUserEmail={currentUserEmail}
+          currentUserName={currentUserName}
+          onSaveOutreachLog={onSaveOutreachLog}
+        />
       )}
     </div>
   );

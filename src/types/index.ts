@@ -31,6 +31,22 @@ export type CandidateStatus = CandidateStage | 'Screened' | 'Reviewing' | 'Archi
 
 export type InterviewSlotStatus = 'Scheduled' | 'Completed' | 'Cancelled' | 'Rescheduled';
 
+export type OutreachTemplateType =
+  | 'interview_invitation'
+  | 'clarification_request'
+  | 'rejection'
+  | 'screening_followup';
+
+export interface CandidateOutreachLog {
+  id: string;
+  templateType: OutreachTemplateType;
+  subject: string;
+  recipientEmail?: string;
+  sentAt: string;
+  senderName: string;
+  notes?: string;
+}
+
 export interface CandidateInterview {
   id: string;
   candidateId: string;
@@ -60,6 +76,7 @@ export interface CandidateRecord {
   notes?: string;
   status: CandidateStatus;
   interviews?: CandidateInterview[];
+  outreachLogs?: CandidateOutreachLog[];
   createdAt: string;
   updatedAt: string;
 }
