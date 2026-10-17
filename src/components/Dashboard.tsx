@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { 
   FileText, 
   ArrowRight, 
@@ -10,18 +10,26 @@ import {
   Users,
   Plus,
   Sparkles,
-  MapPin
+  MapPin,
+  CalendarClock,
+  Clock,
+  AlertTriangle,
+  AlertCircle,
+  ChevronRight
 } from 'lucide-react';
-import { AnalysisResult, Job } from '../types';
+import { AnalysisResult, Job, CandidateRecord } from '../types';
+import { computeHiringReminders } from '../lib/reminder-helpers';
 
 interface DashboardProps {
   onStartNewAnalysis: () => void;
   onViewCandidates: () => void;
   onViewJobs: () => void;
   onViewAnalytics?: () => void;
+  onViewReminders?: () => void;
   onViewAnalysisResult: (result: AnalysisResult) => void;
   onStartAnalysisForJob?: (job: Job) => void;
   recentResults: AnalysisResult[];
+  candidates?: CandidateRecord[];
   jobs: Job[];
 }
 
@@ -30,15 +38,27 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onViewCandidates,
   onViewJobs,
   onViewAnalytics,
+  onViewReminders,
   onViewAnalysisResult,
   onStartAnalysisForJob,
   recentResults,
+  candidates = [],
   jobs,
 }) => {
   const openJobs = jobs.filter((j) => j.status === 'Open');
   const strongAlignments = recentResults.filter(
     (r) => r.overallRoleAlignment.level === 'Strong alignment'
   ).length;
+
+  const reminders = useMemo(() => {
+    return computeHiringReminders(candidates, jobs, recentResults);
+  }, [candidates, jobs, recentResults]);
+
+  const urgentReminders = useMemo(() => {
+    return reminders.filter(
+      (r) => r.urgency === 'overdue' || r.urgency === 'today' || r.category === 'missing_feedback'
+    );
+  }, [reminders]);
 
   return (
     <div className="space-y-8 pb-16">
@@ -63,13 +83,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
+            {onViewReminders && (
+              <button
+                onClick={onViewReminders}
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg transition-colors shadow-2xs cursor-pointer"
+              >
+                <CalendarClock className="w-4 h-4 text-purple-600" />
+                <span>Reminders</span>
+                {reminders.length > 0 && (
+                  <span className="text-[10px] font-bold bg-purple-200 text-purple-900 px-1.5 py-0.2 rounded-full font-mono">
+                    {reminders.length}
+                  </span>
+                )}
+              </button>
+            )}
+
             {onViewAnalytics && (
               <button
                 onClick={onViewAnalytics}
                 className="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors shadow-2xs cursor-pointer"
               >
                 <Users className="w-4 h-4 text-blue-700" />
-                <span>CEO Dashboard</span>
+                <span>Recruitment Analytics</span>
               </button>
             )}
 
@@ -92,7 +127,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* Real Metrics Banner (no fake numbers) */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 pt-6 border-t border-slate-100">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-6 pt-6 border-t border-slate-100">
           <div className="p-3.5 bg-slate-50/80 rounded-lg border border-slate-200/70">
             <div className="text-xs text-slate-500 font-medium">Active Job Requisitions</div>
             <div className="text-2xl font-bold text-slate-900 mt-1">{openJobs.length}</div>
@@ -116,13 +151,109 @@ export const Dashboard: React.FC<DashboardProps> = ({
               Fully verified against core role criteria
             </div>
           </div>
+
+          <div
+            onClick={onViewReminders}
+            className={`p-3.5 rounded-lg border transition-all cursor-pointer ${
+              reminders.length > 0
+                ? 'bg-purple-50/80 border-purple-200 hover:bg-purple-100/60'
+                : 'bg-slate-50/80 border-slate-200/70'
+            }`}
+          >
+            <div className="text-xs text-purple-700 font-semibold flex items-center justify-between">
+              <span>Hiring Reminders</span>
+              <CalendarClock className="w-3.5 h-3.5 text-purple-600" />
+            </div>
+            <div className="text-2xl font-bold text-slate-900 mt-1">{reminders.length}</div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {reminders.length === 0
+                ? 'All debriefs & schedules current'
+                : `${urgentReminders.length} priority action items`}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Active Requisitions & Recent Screenings */}
+        {/* Left 2 Cols: Reminders Widget, Active Requisitions & Recent Screenings */}
         <div className="lg:col-span-2 space-y-6">
+
+          {/* Interview & Hiring Reminders Callout (Phase 4) */}
+          {reminders.length > 0 && (
+            <div className="bg-white border border-purple-200/90 rounded-xl p-5 shadow-2xs space-y-3.5 relative overflow-hidden">
+              <div className="flex items-center justify-between border-b border-purple-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-md bg-purple-50 border border-purple-200 text-purple-700">
+                    <CalendarClock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <span>Interview & Hiring Reminders</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800">
+                        {reminders.length} Action Item{reminders.length === 1 ? '' : 's'}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Upcoming scheduled interviews, overdue rounds, and completed loops awaiting feedback notes.
+                    </p>
+                  </div>
+                </div>
+
+                {onViewReminders && (
+                  <button
+                    onClick={onViewReminders}
+                    className="text-xs font-semibold text-purple-700 hover:text-purple-900 inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>View All</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                {reminders.slice(0, 3).map((rem) => {
+                  const isOverdue = rem.urgency === 'overdue';
+                  const isMissingFeedback = rem.category === 'missing_feedback';
+                  return (
+                    <div
+                      key={rem.id}
+                      onClick={onViewReminders}
+                      className="p-3 rounded-lg border border-slate-100 hover:border-purple-200 bg-slate-50/70 hover:bg-purple-50/30 flex items-center justify-between gap-3 transition-colors cursor-pointer"
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-slate-900 truncate">
+                            {rem.candidateName}
+                          </span>
+                          <span className="text-xs text-slate-400">·</span>
+                          <span className="text-xs text-slate-600 truncate font-medium">
+                            {rem.jobTitle}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 truncate">{rem.description}</p>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                            isOverdue
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : isMissingFeedback
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-blue-50 text-blue-700 border-blue-200'
+                          }`}
+                        >
+                          {rem.statusText}
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           
           {/* Active Job Requisitions Section */}
           <div className="bg-white border border-slate-200/90 rounded-xl p-5 shadow-2xs space-y-4">

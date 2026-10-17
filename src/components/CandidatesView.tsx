@@ -44,6 +44,7 @@ import {
   PIPELINE_STAGES 
 } from '../types';
 import { CandidateOutreachModal } from './CandidateOutreachModal';
+import { CandidateActivityTimeline } from './CandidateActivityTimeline';
 
 interface CandidatesViewProps {
   candidates: AnalysisResult[];
@@ -60,6 +61,11 @@ interface CandidatesViewProps {
   onSaveCandidateOutreach?: (candidateIdOrAnalysisId: string, log: CandidateOutreachLog) => Promise<void>;
   onCompareCandidates?: (selectedCandidates: AnalysisResult[]) => void;
   initialViewMode?: 'list' | 'pipeline';
+  initialTargetCandidateId?: string | null;
+  initialAction?: 'interviews' | 'outreach' | 'timeline' | null;
+  onClearInitialAction?: () => void;
+  initialSelectedJobId?: string | null;
+  onClearInitialJobFilter?: () => void;
 }
 
 export const CandidatesView: React.FC<CandidatesViewProps> = ({
@@ -77,6 +83,11 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
   onSaveCandidateOutreach,
   onCompareCandidates,
   initialViewMode = 'list',
+  initialTargetCandidateId,
+  initialAction,
+  onClearInitialAction,
+  initialSelectedJobId,
+  onClearInitialJobFilter,
 }) => {
   // Primary view switcher: 'list' (Registry) or 'pipeline' (Stage Columns)
   const [viewMode, setViewMode] = useState<'list' | 'pipeline'>(initialViewMode);
@@ -84,6 +95,7 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
+  const [jobIdFilter, setJobIdFilter] = useState<string>(initialSelectedJobId || 'All');
   const [roleFilter, setRoleFilter] = useState('All');
   const [alignmentFilter, setAlignmentFilter] = useState('All');
   const [stageFilter, setStageFilter] = useState<string>('All');
@@ -98,11 +110,21 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
   const [isOutreachModalOpen, setIsOutreachModalOpen] = useState(false);
   const [outreachInitialTemplate, setOutreachInitialTemplate] = useState<OutreachTemplateType>('interview_invitation');
 
-  const handleOpenOutreach = (cand: AnalysisResult, initialType?: OutreachTemplateType) => {
-    const rec = getCandidateRecord(cand);
-    setOutreachCandidateAnalysis(cand);
+  const handleOpenOutreach = (candOrRecord: AnalysisResult | CandidateRecord, initialType?: OutreachTemplateType) => {
+    let rec: CandidateRecord | undefined;
+    let analysis: AnalysisResult | undefined;
+    if ('candidateOverview' in candOrRecord) {
+      analysis = candOrRecord;
+      rec = getCandidateRecord(candOrRecord);
+    } else {
+      rec = candOrRecord;
+      analysis = candidates.find(
+        (a) => a.id === candOrRecord.analysisId || a.candidateId === candOrRecord.id
+      );
+    }
+    setOutreachCandidateAnalysis(analysis || null);
     setOutreachCandidate(rec || null);
-    const stage = getCandidateCurrentStage(cand);
+    const stage = analysis ? getCandidateCurrentStage(analysis) : getNormalizedStage(rec?.status);
     if (initialType) {
       setOutreachInitialTemplate(initialType);
     } else if (stage === 'Interview') {
@@ -115,6 +137,26 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
       setOutreachInitialTemplate('screening_followup');
     }
     setIsOutreachModalOpen(true);
+  };
+
+  // Candidate Activity Timeline Modal state
+  const [timelineCandidate, setTimelineCandidate] = useState<CandidateRecord | null>(null);
+  const [timelineCandidateAnalysis, setTimelineCandidateAnalysis] = useState<AnalysisResult | null>(null);
+  const [isTimelineModalOpen, setIsTimelineModalOpen] = useState(false);
+
+  const handleOpenTimeline = (candOrRecord: AnalysisResult | CandidateRecord) => {
+    if ('candidateOverview' in candOrRecord) {
+      const rec = getCandidateRecord(candOrRecord);
+      setTimelineCandidateAnalysis(candOrRecord);
+      setTimelineCandidate(rec || null);
+    } else {
+      const analysis = candidates.find(
+        (a) => a.id === candOrRecord.analysisId || a.candidateId === candOrRecord.id
+      );
+      setTimelineCandidate(candOrRecord);
+      setTimelineCandidateAnalysis(analysis || null);
+    }
+    setIsTimelineModalOpen(true);
   };
 
   // Deletion modal state
@@ -161,6 +203,43 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
     return candidateRecords.find((r) => r.analysisId === cand.id || r.id === cand.id);
   };
 
+  // Handle direct navigation triggers (e.g., from Reminders view)
+  React.useEffect(() => {
+    if (initialTargetCandidateId && initialAction) {
+      const matchCand = candidateRecords.find(
+        (c) => c.id === initialTargetCandidateId || c.analysisId === initialTargetCandidateId
+      );
+      const matchAnalysis = candidates.find(
+        (a) =>
+          a.id === initialTargetCandidateId ||
+          a.candidateId === initialTargetCandidateId ||
+          (matchCand && (matchCand.analysisId === a.id || matchCand.id === a.candidateId))
+      );
+
+      if (initialAction === 'interviews') {
+        if (matchCand || matchAnalysis) {
+          setInterviewCandidate(matchCand || null);
+          setInterviewCandidateAnalysis(matchAnalysis || null);
+          setIsAddingNewRound(false);
+          setInterviewError(null);
+        }
+      } else if (initialAction === 'outreach' && (matchAnalysis || matchCand)) {
+        handleOpenOutreach(matchAnalysis || matchCand!);
+      } else if (initialAction === 'timeline' && (matchAnalysis || matchCand)) {
+        handleOpenTimeline(matchAnalysis || matchCand!);
+      }
+      onClearInitialAction?.();
+    }
+  }, [initialTargetCandidateId, initialAction, candidateRecords, candidates]);
+
+  // Handle direct job filter trigger (e.g. from Jobs view)
+  React.useEffect(() => {
+    if (initialSelectedJobId) {
+      setJobIdFilter(initialSelectedJobId);
+      setRoleFilter('All');
+    }
+  }, [initialSelectedJobId]);
+
   // Helper to resolve canonical candidate stage
   const getCandidateCurrentStage = (cand: AnalysisResult): CandidateStage => {
     const record = getCandidateRecord(cand);
@@ -182,7 +261,7 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
     }
   };
 
-  // Filtered candidate list based on search, role, alignment, and stage filters
+  // Filtered candidate list based on search, requisition, role, alignment, and stage filters
   const filteredCandidates = candidates.filter((item) => {
     const candidateName = item.candidateOverview.detectedName || item.fileName;
     const location = item.candidateOverview.detectedLocation || '';
@@ -196,11 +275,12 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
       item.roleSummary.jobTitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.roleSummary.department.toLowerCase().includes(searchQuery.toLowerCase());
     
+    const matchesJob = jobIdFilter === 'All' || item.jobId === jobIdFilter;
     const matchesRole = roleFilter === 'All' || item.roleSummary.jobTitle === roleFilter;
     const matchesAlignment = alignmentFilter === 'All' || item.overallRoleAlignment.level === alignmentFilter;
     const matchesStage = stageFilter === 'All' || currentStage === stageFilter;
 
-    return matchesQuery && matchesRole && matchesAlignment && matchesStage;
+    return matchesQuery && matchesJob && matchesRole && matchesAlignment && matchesStage;
   });
 
   const uniqueRoles = ['All', ...Array.from(new Set(candidates.map((c) => c.roleSummary.jobTitle)))];
@@ -683,6 +763,34 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
         </div>
       )}
 
+      {/* Active Requisition Filter Banner */}
+      {jobIdFilter !== 'All' && (
+        <div className="bg-blue-50/90 border border-blue-200 rounded-lg p-3 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-blue-950 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <Briefcase className="w-4 h-4 text-blue-700 shrink-0" />
+            <span>
+              Filtered by Requisition:{' '}
+              <strong className="text-blue-900 font-bold">
+                {jobs.find((j) => j.id === jobIdFilter)?.title || 'Selected Job'}
+              </strong>
+              {jobs.find((j) => j.id === jobIdFilter)?.department && (
+                <span className="text-blue-700"> ({jobs.find((j) => j.id === jobIdFilter)?.department})</span>
+              )}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setJobIdFilter('All');
+              onClearInitialJobFilter?.();
+            }}
+            className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:text-blue-900 underline text-xs cursor-pointer self-start sm:self-auto"
+          >
+            <span>Show All Requisitions</span>
+          </button>
+        </div>
+      )}
+
       {/* Filter / Search Bar */}
       <div className="bg-white border border-slate-200/90 rounded-lg p-3.5 shadow-2xs flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
         <div className="relative flex-1">
@@ -700,6 +808,28 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Requisition Filter */}
+          {jobs.length > 0 && (
+            <select
+              value={jobIdFilter}
+              onChange={(e) => {
+                setJobIdFilter(e.target.value);
+                setVisibleCount(PAGE_SIZE);
+                if (e.target.value === 'All') {
+                  onClearInitialJobFilter?.();
+                }
+              }}
+              className="text-xs bg-slate-50 border border-slate-200 rounded-md py-1.5 px-2.5 focus:outline-hidden focus:border-blue-600 text-slate-700 font-medium"
+            >
+              <option value="All">All Requisitions ({jobs.length})</option>
+              {jobs.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.title} {j.status !== 'Open' ? `· [${j.status}]` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+
           {/* Role Filter */}
           {uniqueRoles.length > 1 && (
             <select
@@ -1042,6 +1172,17 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                                   )}
                                 </button>
 
+                                {/* Candidate Activity Timeline Action */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenTimeline(cand)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-2 py-1 rounded transition-colors cursor-pointer"
+                                  title="View candidate activity and audit timeline"
+                                >
+                                  <Clock className="w-3 h-3 text-slate-500" />
+                                  <span>Timeline</span>
+                                </button>
+
                                 <button
                                   type="button"
                                   onClick={() => onSelectCandidate(cand)}
@@ -1300,6 +1441,16 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                               {matchingRecord.outreachLogs.length}
                             </span>
                           )}
+                        </button>
+
+                        {/* Candidate Activity Timeline Action */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenTimeline(cand)}
+                          className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded transition-colors cursor-pointer"
+                          title="Candidate Activity Timeline"
+                        >
+                          <Clock className="w-4 h-4" />
                         </button>
 
                         {onUpdateCandidateNotes && (
@@ -1872,6 +2023,76 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
           onSaveOutreachLog={onSaveCandidateOutreach}
           initialTemplateType={outreachInitialTemplate}
         />
+      )}
+
+      {/* Candidate Activity Timeline Modal */}
+      {isTimelineModalOpen && (timelineCandidate || timelineCandidateAnalysis) && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <span>
+                      {timelineCandidate?.name ||
+                        timelineCandidateAnalysis?.candidateOverview?.detectedName ||
+                        timelineCandidateAnalysis?.fileName ||
+                        'Candidate'}{' '}
+                      — Activity Timeline
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {timelineCandidate?.jobTitle || timelineCandidateAnalysis?.roleSummary?.jobTitle || 'Role'}{' '}
+                    · Full chronological history of screenings, status changes, interviews, notes, and outreach.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTimelineModalOpen(false);
+                  setTimelineCandidate(null);
+                  setTimelineCandidateAnalysis(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                title="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
+              <CandidateActivityTimeline
+                candidate={timelineCandidate}
+                analysis={timelineCandidateAnalysis}
+                showCardWrapper={false}
+              />
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+              <span className="text-[11px] text-slate-500">
+                Timeline events are synchronized securely with your Firestore candidate records.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTimelineModalOpen(false);
+                  setTimelineCandidate(null);
+                  setTimelineCandidateAnalysis(null);
+                }}
+                className="px-4 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-2xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

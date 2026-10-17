@@ -21,10 +21,12 @@ import {
   Printer,
   Edit3,
   Loader2,
-  Mail
+  Mail,
+  Download
 } from 'lucide-react';
 import { AnalysisResult, CandidateRecord, Job, CandidateStage, MatchStatus, getNormalizedStage, PIPELINE_STAGES, CandidateOutreachLog } from '../types';
 import { CandidateOutreachModal } from './CandidateOutreachModal';
+import { generateComparisonPdfReport } from '../lib/pdf-report-generator';
 
 interface CandidateComparisonProps {
   candidates: AnalysisResult[];
@@ -65,6 +67,10 @@ export const CandidateComparison: React.FC<CandidateComparisonProps> = ({
   const [editingAnalysis, setEditingAnalysis] = useState<AnalysisResult | null>(null);
   const [noteContent, setNoteContent] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
+
+  // PDF Export and Print feedback
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [printNotice, setPrintNotice] = useState<{ type: 'info' | 'error'; message: string } | null>(null);
 
   // Job requisition details for this comparison
   const jobTitle = candidates[0]?.roleSummary?.jobTitle || 'Role Comparison';
@@ -273,20 +279,59 @@ export const CandidateComparison: React.FC<CandidateComparisonProps> = ({
               </button>
             )}
 
+            {/* Structured PDF Comparison Export */}
+            <button
+              type="button"
+              disabled={isExportingPdf}
+              onClick={() => {
+                setIsExportingPdf(true);
+                setPrintNotice(null);
+                try {
+                  generateComparisonPdfReport(candidates, currentJob);
+                  setPrintNotice({
+                    type: 'info',
+                    message: 'Candidate comparison matrix downloaded successfully as PDF.',
+                  });
+                } catch (err: any) {
+                  console.error('Comparison PDF export error:', err);
+                  setPrintNotice({
+                    type: 'error',
+                    message: 'Could not generate comparison PDF. You can also use Print Comparison.',
+                  });
+                } finally {
+                  setIsExportingPdf(false);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg shadow-2xs transition-colors cursor-pointer print:hidden"
+              title="Download structured A4 landscape PDF comparison report"
+            >
+              {isExportingPdf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              <span>{isExportingPdf ? 'Exporting PDF...' : 'Download Comparison (PDF)'}</span>
+            </button>
+
             {/* Print / Save PDF Comparison */}
             <button
               type="button"
               onClick={() => {
+                setPrintNotice(null);
                 try {
                   if (typeof window !== 'undefined' && typeof window.print === 'function') {
                     window.print();
                   }
                 } catch (printErr) {
                   console.warn('Browser printing restricted by sandbox frame:', printErr);
+                  setPrintNotice({
+                    type: 'info',
+                    message: 'Browser printing was restricted by this iframe window. Use "Download Comparison (PDF)" to save the offline report.',
+                  });
                 }
               }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg shadow-2xs transition-colors cursor-pointer print:hidden"
-              title="Print or save candidate comparison as PDF"
+              title="Print or save candidate comparison via browser print dialog"
             >
               <Printer className="w-3.5 h-3.5 text-slate-500" />
               <span>Print Comparison</span>
@@ -300,6 +345,29 @@ export const CandidateComparison: React.FC<CandidateComparisonProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Print / Export Feedback Banner */}
+        {printNotice && (
+          <div
+            className={`mt-4 border rounded-lg p-3 text-xs flex items-center justify-between gap-3 print:hidden animate-in fade-in duration-150 ${
+              printNotice.type === 'error'
+                ? 'bg-rose-50 border-rose-200 text-rose-900'
+                : 'bg-blue-50 border-blue-200 text-blue-950'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Info className="w-4 h-4 text-blue-700 shrink-0" />
+              <span>{printNotice.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPrintNotice(null)}
+              className="font-semibold px-2 py-0.5 text-slate-600 hover:text-slate-900 rounded cursor-pointer shrink-0"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Governance & Anti-Bias Disclaimer */}
         <div className="mt-5 pt-4 border-t border-slate-100 flex items-start gap-2.5 text-xs text-slate-600 bg-slate-50/80 p-3.5 rounded-lg border border-slate-200/70">

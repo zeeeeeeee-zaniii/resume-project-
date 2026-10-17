@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { TabType, AnalysisResult, ResumeFile, Job, CandidateRecord, CandidateOutreachLog } from './types';
+import { TabType, AnalysisResult, ResumeFile, Job, CandidateRecord, CandidateOutreachLog, CandidateActivityEvent } from './types';
+import { formatOutreachTemplateLabel } from './lib/timeline-helpers';
 import { Header, MihoraLogo } from './components/Header';
 import { Dashboard } from './components/Dashboard';
 import { CeoDashboard } from './components/CeoDashboard';
@@ -8,7 +9,9 @@ import { NewAnalysis } from './components/NewAnalysis';
 import { AnalysisResults } from './components/AnalysisResults';
 import { CandidateComparison } from './components/CandidateComparison';
 import { CandidatesView } from './components/CandidatesView';
+import { RemindersView } from './components/RemindersView';
 import { SettingsView } from './components/SettingsView';
+import { computeHiringReminders } from './lib/reminder-helpers';
 import { SignInView } from './components/SignInView';
 import { UnauthorizedView } from './components/UnauthorizedView';
 import { checkUserAuthorization } from './lib/auth-policy';
@@ -51,6 +54,16 @@ export default function App() {
   const [candidatesToCompare, setCandidatesToCompare] = useState<AnalysisResult[] | null>(null);
   const [jobForAnalysis, setJobForAnalysis] = useState<Job | null>(null);
   const [cachedResumeFile, setCachedResumeFile] = useState<ResumeFile | null>(null);
+  const [candidateActionTarget, setCandidateActionTarget] = useState<{
+    candidateId: string;
+    action: 'interviews' | 'outreach' | 'timeline';
+  } | null>(null);
+  const [candidateFilterJobId, setCandidateFilterJobId] = useState<string | null>(null);
+
+  // Compute real actionable reminders across candidates, jobs, and interviews
+  const hiringReminders = React.useMemo(() => {
+    return computeHiringReminders(candidatesList, jobsList, analysesList);
+  }, [candidatesList, jobsList, analysesList]);
 
   // Initialize and check connection on boot
   useEffect(() => {
@@ -70,6 +83,12 @@ export default function App() {
       setJobsList([]);
       setCandidatesList([]);
       setAnalysesList([]);
+      setSelectedResult(null);
+      setCandidatesToCompare(null);
+      setJobForAnalysis(null);
+      setCachedResumeFile(null);
+      setCandidateActionTarget(null);
+      setCandidateFilterJobId(null);
       return;
     }
 
@@ -105,7 +124,11 @@ export default function App() {
 
   const handleSignOut = async () => {
     setSelectedResult(null);
+    setCandidatesToCompare(null);
     setJobForAnalysis(null);
+    setCachedResumeFile(null);
+    setCandidateActionTarget(null);
+    setCandidateFilterJobId(null);
     setActiveTab('overview');
     await signOutUser();
   };
@@ -162,9 +185,27 @@ export default function App() {
     setCachedResumeFile(resumeFile);
 
     if (currentUser) {
-      // 1. Generate candidate record
+      // 1. Generate candidate record with initial recorded screening activity event
       const candidateId = `cand-${Date.now()}`;
       const candidateName = result.candidateOverview.detectedName || resumeFile?.name || 'Candidate';
+      const actorName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Recruiter';
+      const actorEmail = currentUser.email || undefined;
+
+      const initialEvent: CandidateActivityEvent = {
+        id: `act-analysis-${Date.now()}`,
+        type: 'analysis_completed',
+        title: 'Resume Screened & Analysis Completed',
+        timestamp: new Date().toISOString(),
+        actorName,
+        actorEmail,
+        details: `Screened for ${job.title} (${job.department}). Overall alignment: ${result.overallRoleAlignment.level}. File: ${resumeFile?.name || result.fileName}.`,
+        metadata: {
+          fileName: resumeFile?.name || result.fileName,
+          alignmentLevel: result.overallRoleAlignment.level,
+          jobTitle: job.title,
+        },
+        source: 'recorded',
+      };
       
       const newCandidate: CandidateRecord = {
         id: candidateId,
@@ -179,6 +220,9 @@ export default function App() {
         analysisId: result.id,
         analyzedAt: result.analyzedAt,
         status: 'New',
+        interviews: [],
+        outreachLogs: [],
+        activityTimeline: [initialEvent],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -251,11 +295,25 @@ export default function App() {
     }
 
     if (targetCandidate) {
-      await updateCandidateInFirestore(targetCandidate.id, { notes });
+      const actorName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Recruiter';
+      const actorEmail = currentUser?.email || undefined;
+      const noteEvent: CandidateActivityEvent = {
+        id: `act-notes-${Date.now()}`,
+        type: 'notes_updated',
+        title: 'Recruiter notes updated',
+        timestamp: new Date().toISOString(),
+        actorName,
+        actorEmail,
+        details: notes?.trim() ? (notes.length > 120 ? `${notes.slice(0, 120)}...` : notes) : 'Cleared notes.',
+        source: 'recorded',
+      };
+      const updatedTimeline = [noteEvent, ...(targetCandidate.activityTimeline || [])];
+
+      await updateCandidateInFirestore(targetCandidate.id, { notes, activityTimeline: updatedTimeline });
       setCandidatesList((prev) =>
         prev.map((c) =>
           c.id === targetCandidate!.id
-            ? { ...c, notes, updatedAt: new Date().toISOString() }
+            ? { ...c, notes, activityTimeline: updatedTimeline, updatedAt: new Date().toISOString() }
             : c
         )
       );
@@ -269,6 +327,19 @@ export default function App() {
           matchingAnalysis.candidateId && /^[a-zA-Z0-9_-]+$/.test(matchingAnalysis.candidateId)
             ? matchingAnalysis.candidateId
             : `cand-${matchingAnalysis.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+        const actorName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Recruiter';
+        const actorEmail = currentUser.email || undefined;
+        const noteEvent: CandidateActivityEvent = {
+          id: `act-notes-${Date.now()}`,
+          type: 'notes_updated',
+          title: 'Recruiter notes recorded',
+          timestamp: new Date().toISOString(),
+          actorName,
+          actorEmail,
+          details: notes?.trim() ? (notes.length > 120 ? `${notes.slice(0, 120)}...` : notes) : 'Initial note recorded.',
+          source: 'recorded',
+        };
 
         const newRecord: CandidateRecord = {
           id: candidateDocId,
@@ -286,6 +357,7 @@ export default function App() {
           notes,
           interviews: [],
           outreachLogs: [],
+          activityTimeline: [noteEvent],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -318,12 +390,63 @@ export default function App() {
       }
     }
 
+    const actorName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Recruiter';
+    const actorEmail = currentUser?.email || undefined;
+    const updatedInterviews = interviews || [];
+
     if (targetCandidate) {
-      await updateCandidateInFirestore(targetCandidate.id, { interviews });
+      const prevInterviews = targetCandidate.interviews || [];
+      let eventType: CandidateActivityEvent['type'] = 'interview_scheduled';
+      let eventTitle = 'Interview rounds updated';
+      let eventDetails = `Active interview rounds updated (${updatedInterviews.length} scheduled/recorded).`;
+
+      if (updatedInterviews.length > prevInterviews.length) {
+        const newestRound = updatedInterviews[0];
+        eventType = 'interview_scheduled';
+        eventTitle = `Interview Scheduled: ${newestRound.interviewType}`;
+        eventDetails = `Scheduled with ${newestRound.interviewers?.join(', ') || 'team'}. Slot: ${new Date(newestRound.scheduledAt).toLocaleString()} (${newestRound.durationMinutes}m).`;
+      } else if (updatedInterviews.length === prevInterviews.length && updatedInterviews.length > 0) {
+        const modified = updatedInterviews.find((curr) => {
+          const prev = prevInterviews.find((p) => p.id === curr.id);
+          return prev && (prev.status !== curr.status || prev.feedbackNotes !== curr.feedbackNotes || prev.scheduledAt !== curr.scheduledAt);
+        });
+        if (modified) {
+          if (modified.status === 'Completed') {
+            eventType = 'interview_completed';
+            eventTitle = `Interview Completed: ${modified.interviewType}`;
+            eventDetails = `Marked as Completed.${modified.feedbackNotes ? ` Debrief note: "${modified.feedbackNotes}"` : ''}`;
+          } else if (modified.status === 'Cancelled') {
+            eventType = 'interview_cancelled';
+            eventTitle = `Interview Cancelled: ${modified.interviewType}`;
+            eventDetails = `Cancelled.${modified.feedbackNotes ? ` Note: "${modified.feedbackNotes}"` : ''}`;
+          } else if (modified.status === 'Rescheduled') {
+            eventType = 'interview_rescheduled';
+            eventTitle = `Interview Rescheduled: ${modified.interviewType}`;
+            eventDetails = `Slot moved to: ${new Date(modified.scheduledAt).toLocaleString()}.${modified.feedbackNotes ? ` Note: "${modified.feedbackNotes}"` : ''}`;
+          } else {
+            eventTitle = `Interview Updated: ${modified.interviewType}`;
+            eventDetails = `Status: ${modified.status}.${modified.feedbackNotes ? ` Debrief: "${modified.feedbackNotes}"` : ''}`;
+          }
+        }
+      }
+
+      const interviewEvent: CandidateActivityEvent = {
+        id: `act-interview-${Date.now()}`,
+        type: eventType,
+        title: eventTitle,
+        timestamp: new Date().toISOString(),
+        actorName,
+        actorEmail,
+        details: eventDetails,
+        source: 'recorded',
+      };
+      const updatedTimeline = [interviewEvent, ...(targetCandidate.activityTimeline || [])];
+
+      await updateCandidateInFirestore(targetCandidate.id, { interviews, activityTimeline: updatedTimeline });
       setCandidatesList((prev) =>
         prev.map((c) =>
           c.id === targetCandidate!.id
-            ? { ...c, interviews, updatedAt: new Date().toISOString() }
+            ? { ...c, interviews, activityTimeline: updatedTimeline, updatedAt: new Date().toISOString() }
             : c
         )
       );
@@ -337,6 +460,20 @@ export default function App() {
           matchingAnalysis.candidateId && /^[a-zA-Z0-9_-]+$/.test(matchingAnalysis.candidateId)
             ? matchingAnalysis.candidateId
             : `cand-${matchingAnalysis.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+        const newestRound = updatedInterviews[0];
+        const initialInterviewEvent: CandidateActivityEvent = {
+          id: `act-interview-${Date.now()}`,
+          type: newestRound?.status === 'Completed' ? 'interview_completed' : 'interview_scheduled',
+          title: newestRound ? `Interview ${newestRound.status}: ${newestRound.interviewType}` : 'Interview scheduled',
+          timestamp: new Date().toISOString(),
+          actorName,
+          actorEmail,
+          details: newestRound
+            ? `Initial round scheduled with ${newestRound.interviewers?.join(', ') || 'team'}. Slot: ${new Date(newestRound.scheduledAt).toLocaleString()}.`
+            : 'Initial interview round scheduled.',
+          source: 'recorded',
+        };
 
         const newRecord: CandidateRecord = {
           id: candidateDocId,
@@ -353,6 +490,7 @@ export default function App() {
           status: 'Interview',
           interviews: interviews || [],
           outreachLogs: [],
+          activityTimeline: [initialInterviewEvent],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -406,13 +544,27 @@ export default function App() {
       const existingLogs = Array.isArray(targetCandidate.outreachLogs) ? targetCandidate.outreachLogs : [];
       const updatedLogs = [sanitizedLog, ...existingLogs];
 
-      await updateCandidateInFirestore(targetCandidate.id, { outreachLogs: updatedLogs });
+      const actorName = sanitizedLog.senderName || currentUser.displayName || currentUser.email?.split('@')[0] || 'Recruiter';
+      const actorEmail = currentUser.email || undefined;
+      const outreachEvent: CandidateActivityEvent = {
+        id: `act-outreach-${sanitizedLog.id}`,
+        type: 'outreach_logged',
+        title: `Outreach Logged: ${formatOutreachTemplateLabel(sanitizedLog.templateType)}`,
+        timestamp: sanitizedLog.sentAt,
+        actorName,
+        actorEmail,
+        details: `Subject: "${sanitizedLog.subject}"${sanitizedLog.recipientEmail ? ` · To: ${sanitizedLog.recipientEmail}` : ''}${sanitizedLog.notes ? ` · Note: ${sanitizedLog.notes}` : ''}`,
+        source: 'recorded',
+      };
+      const updatedTimeline = [outreachEvent, ...(targetCandidate.activityTimeline || [])];
+
+      await updateCandidateInFirestore(targetCandidate.id, { outreachLogs: updatedLogs, activityTimeline: updatedTimeline });
 
       // Optimistically update candidate in state
       setCandidatesList((prev) =>
         prev.map((c) =>
           c.id === targetCandidate!.id
-            ? { ...c, outreachLogs: updatedLogs, updatedAt: new Date().toISOString() }
+            ? { ...c, outreachLogs: updatedLogs, activityTimeline: updatedTimeline, updatedAt: new Date().toISOString() }
             : c
         )
       );
@@ -430,6 +582,19 @@ export default function App() {
             ? matchingAnalysis.candidateId
             : `cand-${matchingAnalysis.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
+        const actorName = sanitizedLog.senderName || currentUser.displayName || currentUser.email?.split('@')[0] || 'Recruiter';
+        const actorEmail = currentUser.email || undefined;
+        const outreachEvent: CandidateActivityEvent = {
+          id: `act-outreach-${sanitizedLog.id}`,
+          type: 'outreach_logged',
+          title: `Outreach Logged: ${formatOutreachTemplateLabel(sanitizedLog.templateType)}`,
+          timestamp: sanitizedLog.sentAt,
+          actorName,
+          actorEmail,
+          details: `Subject: "${sanitizedLog.subject}"${sanitizedLog.recipientEmail ? ` · To: ${sanitizedLog.recipientEmail}` : ''}${sanitizedLog.notes ? ` · Note: ${sanitizedLog.notes}` : ''}`,
+          source: 'recorded',
+        };
+
         const newRecord: CandidateRecord = {
           id: candidateDocId,
           jobId: matchingAnalysis.jobId || matchingJob?.id || '',
@@ -444,6 +609,7 @@ export default function App() {
           analyzedAt: matchingAnalysis.analyzedAt,
           status: 'New',
           outreachLogs: [sanitizedLog],
+          activityTimeline: [outreachEvent],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -480,11 +646,26 @@ export default function App() {
     }
 
     if (targetCandidate) {
-      await updateCandidateInFirestore(targetCandidate.id, { status });
+      const actorName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Recruiter';
+      const actorEmail = currentUser?.email || undefined;
+      const prevStage = targetCandidate.status || 'New';
+      const statusEvent: CandidateActivityEvent = {
+        id: `act-status-${Date.now()}`,
+        type: 'status_changed',
+        title: `Stage moved to ${status}`,
+        timestamp: new Date().toISOString(),
+        actorName,
+        actorEmail,
+        details: `Candidate stage moved from ${prevStage} to ${status}.`,
+        source: 'recorded',
+      };
+      const updatedTimeline = [statusEvent, ...(targetCandidate.activityTimeline || [])];
+
+      await updateCandidateInFirestore(targetCandidate.id, { status, activityTimeline: updatedTimeline });
       setCandidatesList((prev) =>
         prev.map((c) =>
           c.id === targetCandidate!.id
-            ? { ...c, status, updatedAt: new Date().toISOString() }
+            ? { ...c, status, activityTimeline: updatedTimeline, updatedAt: new Date().toISOString() }
             : c
         )
       );
@@ -499,6 +680,19 @@ export default function App() {
           matchingAnalysis.candidateId && /^[a-zA-Z0-9_-]+$/.test(matchingAnalysis.candidateId)
             ? matchingAnalysis.candidateId
             : `cand-${matchingAnalysis.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+        const actorName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Recruiter';
+        const actorEmail = currentUser.email || undefined;
+        const statusEvent: CandidateActivityEvent = {
+          id: `act-status-${Date.now()}`,
+          type: 'status_changed',
+          title: `Stage moved to ${status}`,
+          timestamp: new Date().toISOString(),
+          actorName,
+          actorEmail,
+          details: `Initial candidate stage set to ${status}.`,
+          source: 'recorded',
+        };
 
         const newRecord: CandidateRecord = {
           id: candidateDocId,
@@ -515,6 +709,7 @@ export default function App() {
           status,
           interviews: [],
           outreachLogs: [],
+          activityTimeline: [statusEvent],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -591,6 +786,7 @@ export default function App() {
         currentUser={currentUser}
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
+        reminderCount={hiringReminders.length}
       />
 
       {/* Main Viewport Content */}
@@ -642,10 +838,42 @@ export default function App() {
                 onViewCandidates={() => setActiveTab('candidates')}
                 onViewJobs={() => setActiveTab('jobs')}
                 onViewAnalytics={() => setActiveTab('analytics')}
+                onViewReminders={() => setActiveTab('reminders')}
                 onViewAnalysisResult={handleViewAnalysisResult}
                 onStartAnalysisForJob={handleStartAnalysisForJob}
                 recentResults={analysesList}
+                candidates={candidatesList}
                 jobs={jobsList}
+              />
+            )}
+
+            {activeTab === 'reminders' && (
+              <RemindersView
+                candidates={candidatesList}
+                analyses={analysesList}
+                jobs={jobsList}
+                onSelectCandidateAnalysis={handleViewAnalysisById}
+                onNavigateToCandidates={(candId) => {
+                  if (candId) {
+                    setCandidateActionTarget({ candidateId: candId, action: 'interviews' });
+                  }
+                  setActiveTab('candidates');
+                }}
+                onOpenInterviewsModal={(candidate) => {
+                  setCandidateActionTarget({ candidateId: candidate.id, action: 'interviews' });
+                  setActiveTab('candidates');
+                }}
+                onOpenOutreachModal={(candidate) => {
+                  setCandidateActionTarget({ candidateId: candidate.id, action: 'outreach' });
+                  setActiveTab('candidates');
+                }}
+                onOpenTimelineModal={(candidate) => {
+                  setCandidateActionTarget({ candidateId: candidate.id, action: 'timeline' });
+                  setActiveTab('candidates');
+                }}
+                onStartNewAnalysis={handleStartNewAnalysis}
+                currentUserEmail={currentUser?.email || undefined}
+                currentUserName={currentUser?.displayName || undefined}
               />
             )}
 
@@ -659,6 +887,7 @@ export default function App() {
                 onStartNewAnalysis={handleStartNewAnalysis}
                 onSelectCandidateAnalysis={handleViewAnalysisById}
                 onStartAnalysisForJob={handleStartAnalysisForJob}
+                onViewReminders={() => setActiveTab('reminders')}
               />
             )}
 
@@ -671,6 +900,10 @@ export default function App() {
                 onDeleteJob={handleDeleteJob}
                 onStartAnalysisForJob={handleStartAnalysisForJob}
                 onViewCandidateAnalysis={handleViewAnalysisById}
+                onViewJobCandidates={(jobId) => {
+                  setCandidateFilterJobId(jobId);
+                  setActiveTab('candidates');
+                }}
               />
             )}
 
@@ -704,6 +937,11 @@ export default function App() {
                 currentUserName={currentUser?.displayName || undefined}
                 onSaveCandidateOutreach={handleSaveCandidateOutreachLog}
                 onCompareCandidates={(selected) => setCandidatesToCompare(selected)}
+                initialTargetCandidateId={candidateActionTarget?.candidateId}
+                initialAction={candidateActionTarget?.action}
+                onClearInitialAction={() => setCandidateActionTarget(null)}
+                initialSelectedJobId={candidateFilterJobId}
+                onClearInitialJobFilter={() => setCandidateFilterJobId(null)}
               />
             )}
 

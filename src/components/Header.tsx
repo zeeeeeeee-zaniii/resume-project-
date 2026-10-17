@@ -10,6 +10,7 @@ interface HeaderProps {
   currentUser: User | null;
   onSignIn: () => void;
   onSignOut: () => void;
+  reminderCount?: number;
 }
 
 export const MihoraLogo: React.FC<{ className?: string }> = ({ className = 'w-7 h-7' }) => {
@@ -66,10 +67,12 @@ export const Header: React.FC<HeaderProps> = ({
   currentUser,
   onSignIn,
   onSignOut,
+  reminderCount = 0,
 }) => {
-  const navItems: { id: TabType; label: string }[] = [
+  const navItems: { id: TabType; label: string; badge?: number }[] = [
     { id: 'overview', label: 'Overview' },
-    { id: 'analytics', label: 'CEO Dashboard' },
+    { id: 'reminders', label: 'Reminders', badge: reminderCount },
+    { id: 'analytics', label: 'Recruitment Analytics' },
     { id: 'jobs', label: 'Jobs' },
     { id: 'candidates', label: 'Candidates' },
     { id: 'settings', label: 'Settings' },
@@ -111,14 +114,25 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   key={item.id}
                   onClick={() => onSelectTab(item.id)}
-                  className={`px-3.5 py-1.5 text-sm font-medium transition-colors relative whitespace-nowrap rounded-md ${
+                  className={`px-3.5 py-1.5 text-sm font-medium transition-colors relative whitespace-nowrap rounded-md inline-flex items-center gap-1.5 ${
                     isActive
-                      ? 'text-blue-700 bg-blue-50/70'
+                      ? 'text-blue-700 bg-blue-50/70 font-semibold'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
                   }`}
                   aria-current={isActive ? 'page' : undefined}
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span
+                      className={`px-1.5 py-0.2 text-[10px] font-bold rounded-full font-mono ${
+                        isActive
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-purple-100 text-purple-800 border border-purple-200'
+                      }`}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
                   {isActive && (
                     <span className="absolute bottom-0 left-3.5 right-3.5 h-0.5 bg-blue-700 rounded-full" />
                   )}
@@ -170,20 +184,29 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Mobile Navigation Sub-bar */}
-        <div className="md:hidden flex items-center justify-around py-2 border-t border-slate-100 overflow-x-auto">
+        <div className="md:hidden flex items-center justify-around py-2 border-t border-slate-100 overflow-x-auto gap-1">
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => onSelectTab(item.id)}
-                className={`px-2.5 py-1 text-xs font-medium whitespace-nowrap rounded ${
+                className={`px-2.5 py-1 text-xs font-medium whitespace-nowrap rounded inline-flex items-center gap-1 ${
                   isActive
                     ? 'text-blue-700 font-semibold bg-blue-50'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                {item.label}
+                <span>{item.label}</span>
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span
+                    className={`px-1 text-[9px] font-bold rounded-full font-mono ${
+                      isActive ? 'bg-blue-600 text-white' : 'bg-purple-100 text-purple-800'
+                    }`}
+                  >
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}

@@ -1,4 +1,27 @@
-export type TabType = 'overview' | 'analytics' | 'jobs' | 'candidates' | 'settings' | 'new-analysis';
+export type TabType = 'overview' | 'analytics' | 'reminders' | 'jobs' | 'candidates' | 'settings' | 'new-analysis';
+
+export type ReminderCategory = 'upcoming_interview' | 'overdue_interview' | 'missing_feedback' | 'stalled_stage';
+
+export interface HiringReminderItem {
+  id: string;
+  category: ReminderCategory;
+  candidateId: string;
+  candidateName: string;
+  analysisId?: string;
+  jobId?: string;
+  jobTitle: string;
+  jobDepartment: string;
+  interviewId?: string;
+  interviewType?: string;
+  scheduledAt?: string;
+  durationMinutes?: number;
+  interviewers?: string[];
+  meetingLinkOrLocation?: string;
+  statusText: string;
+  urgency: 'overdue' | 'today' | 'tomorrow' | 'upcoming' | 'action_needed';
+  description: string;
+  createdAt?: string;
+}
 
 export interface ResumeFile {
   file: File | null;
@@ -9,6 +32,8 @@ export interface ResumeFile {
   uploadedAt: string;
   base64?: string;
 }
+
+export type JobStatus = 'Draft' | 'Open' | 'On Hold' | 'Closed';
 
 export interface Job {
   id: string;
@@ -21,7 +46,12 @@ export interface Job {
   employmentType?: 'Full-time' | 'Part-time' | 'Contract' | 'Internship' | 'Other';
   location?: string;
   workplaceType?: 'Remote' | 'Hybrid' | 'On-site';
-  status: 'Open' | 'Closed';
+  status: JobStatus;
+  hiringManager?: string;
+  recruiter?: string;
+  openingsCount?: number;
+  openingDate?: string;
+  targetCloseDate?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -61,6 +91,31 @@ export interface CandidateInterview {
   updatedAt: string;
 }
 
+export type ActivityEventSource = 'recorded' | 'inferred';
+
+export type ActivityEventType =
+  | 'resume_uploaded'
+  | 'analysis_completed'
+  | 'status_changed'
+  | 'interview_scheduled'
+  | 'interview_rescheduled'
+  | 'interview_completed'
+  | 'interview_cancelled'
+  | 'notes_updated'
+  | 'outreach_logged';
+
+export interface CandidateActivityEvent {
+  id: string;
+  type: ActivityEventType;
+  title: string;
+  timestamp: string; // ISO 8601 string or formatted timestamp
+  actorName?: string;
+  actorEmail?: string;
+  details?: string;
+  metadata?: Record<string, any>;
+  source: ActivityEventSource; // 'recorded' for verified logs, 'inferred' for baseline document state
+}
+
 export interface CandidateRecord {
   id: string;
   jobId: string;
@@ -77,6 +132,7 @@ export interface CandidateRecord {
   status: CandidateStatus;
   interviews?: CandidateInterview[];
   outreachLogs?: CandidateOutreachLog[];
+  activityTimeline?: CandidateActivityEvent[];
   createdAt: string;
   updatedAt: string;
 }

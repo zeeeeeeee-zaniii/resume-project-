@@ -405,7 +405,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
                   >
                     {jobs.map((job) => (
                       <option key={job.id} value={job.id}>
-                        {job.title} ({job.department}) {job.status === 'Closed' ? '[Closed]' : ''}
+                        {job.title} ({job.department}) {job.status !== 'Open' ? `[${job.status}]` : ''}
                       </option>
                     ))}
                   </select>
@@ -422,7 +422,11 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
                         className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
                           currentJob.status === 'Open'
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                            : currentJob.status === 'On Hold'
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : currentJob.status === 'Draft'
+                            ? 'bg-slate-100 text-slate-700 border border-slate-300'
+                            : 'bg-slate-100 text-slate-600 border border-slate-200'
                         }`}
                       >
                         {currentJob.status}

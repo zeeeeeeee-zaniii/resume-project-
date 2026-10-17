@@ -116,12 +116,12 @@ export async function signOutUser(): Promise<void> {
 export async function saveUserProfile(user: User) {
   const path = `users/${user.uid}`;
   try {
-    await setDoc(doc(db, 'users', user.uid), {
+    await setDoc(doc(db, 'users', user.uid), cleanUndefinedFields({
       userId: user.uid,
       email: user.email || '',
       displayName: user.displayName || 'Mihora Recruiter',
       createdAt: new Date().toISOString(),
-    }, { merge: true });
+    }), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -155,6 +155,9 @@ export function cleanUndefinedFields<T>(obj: T): T {
 export async function saveJobToFirestore(job: Job, user: User) {
   const path = `jobs/${job.id}`;
   try {
+    const validStatuses: ('Draft' | 'Open' | 'On Hold' | 'Closed')[] = ['Draft', 'Open', 'On Hold', 'Closed'];
+    const status = validStatuses.includes(job.status) ? job.status : 'Open';
+
     const payload = cleanUndefinedFields({
       id: job.id,
       userId: user.uid,
@@ -166,7 +169,12 @@ export async function saveJobToFirestore(job: Job, user: User) {
       employmentType: job.employmentType || 'Full-time',
       location: job.location?.trim() || '',
       workplaceType: job.workplaceType || 'Hybrid',
-      status: job.status || 'Open',
+      status,
+      hiringManager: job.hiringManager?.trim() || '',
+      recruiter: job.recruiter?.trim() || '',
+      openingsCount: typeof job.openingsCount === 'number' && job.openingsCount > 0 ? Math.floor(job.openingsCount) : 1,
+      openingDate: job.openingDate || new Date().toISOString().split('T')[0],
+      targetCloseDate: job.targetCloseDate || '',
       createdAt: job.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -251,6 +259,12 @@ export function subscribeToUserJobs(
         const jobs: Job[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
+          const rawStatus = data.status;
+          const validStatuses: ('Draft' | 'Open' | 'On Hold' | 'Closed')[] = ['Draft', 'Open', 'On Hold', 'Closed'];
+          const status = validStatuses.includes(rawStatus)
+            ? rawStatus
+            : (rawStatus === 'Closed' ? 'Closed' : 'Open');
+
           jobs.push({
             id: data.id || docSnap.id,
             userId: data.userId || userId,
@@ -262,7 +276,12 @@ export function subscribeToUserJobs(
             employmentType: data.employmentType || 'Full-time',
             location: data.location || '',
             workplaceType: data.workplaceType || 'Hybrid',
-            status: data.status === 'Closed' ? 'Closed' : 'Open',
+            status,
+            hiringManager: data.hiringManager || '',
+            recruiter: data.recruiter || '',
+            openingsCount: typeof data.openingsCount === 'number' && data.openingsCount > 0 ? Math.floor(data.openingsCount) : 1,
+            openingDate: data.openingDate || (data.createdAt ? data.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]),
+            targetCloseDate: data.targetCloseDate || '',
             createdAt: data.createdAt || new Date().toISOString(),
             updatedAt: data.updatedAt || new Date().toISOString(),
           });
@@ -308,6 +327,7 @@ export async function saveCandidateToFirestore(candidate: CandidateRecord, user:
       status: candidate.status || 'New',
       interviews: candidate.interviews || [],
       outreachLogs: candidate.outreachLogs || [],
+      activityTimeline: candidate.activityTimeline || [],
       createdAt: candidate.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -378,6 +398,7 @@ export function subscribeToUserCandidates(
             status: data.status || 'New',
             interviews: Array.isArray(data.interviews) ? data.interviews : [],
             outreachLogs: Array.isArray(data.outreachLogs) ? data.outreachLogs : [],
+            activityTimeline: Array.isArray(data.activityTimeline) ? data.activityTimeline : [],
             createdAt: data.createdAt || new Date().toISOString(),
             updatedAt: data.updatedAt || new Date().toISOString(),
           });
@@ -410,7 +431,7 @@ export async function saveAnalysisToFirestore(
 ) {
   const path = `analyses/${analysis.id}`;
   try {
-    const payload = {
+    const payload = cleanUndefinedFields({
       id: analysis.id,
       jobId: jobId || analysis.jobId || null,
       candidateId: candidateId || analysis.candidateId || null,
@@ -433,7 +454,7 @@ export async function saveAnalysisToFirestore(
       overallRoleAlignment: analysis.overallRoleAlignment,
       analyzedAt: analysis.analyzedAt,
       createdAt: new Date().toISOString(),
-    };
+    });
 
     await setDoc(doc(db, 'analyses', analysis.id), payload);
   } catch (error) {

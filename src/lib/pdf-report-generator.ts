@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { AnalysisResult } from '../types';
+import { AnalysisResult, Job } from '../types';
 
 /**
  * Generates and downloads a structured, executive-ready PDF report
@@ -517,4 +517,325 @@ export function generateCandidatePdfReport(result: AnalysisResult): void {
   const filename = `${safeCandidateName}_${safeJobTitle}_Screening_Report.pdf`;
 
   doc.save(filename);
+}
+
+/**
+ * Generates and downloads a structured, multi-candidate comparison PDF report.
+ * Renders side-by-side criteria evaluation in A4 landscape orientation with full
+ * offline support and automatic pagination.
+ */
+export function generateComparisonPdfReport(
+  candidates: AnalysisResult[],
+  targetJob?: Job
+): void {
+  if (!candidates || candidates.length === 0) {
+    throw new Error('No candidate data provided for comparison export.');
+  }
+
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = 297;
+  const pageHeight = 210;
+  const marginLeft = 14;
+  const marginRight = 14;
+  const contentWidth = pageWidth - marginLeft - marginRight; // 269mm
+  const bottomMargin = 16;
+
+  const jobTitle = targetJob?.title || candidates[0]?.roleSummary?.jobTitle || 'Role Comparison';
+  const jobDepartment = targetJob?.department || candidates[0]?.roleSummary?.department || 'General';
+
+  let currentY = 16;
+
+  const drawRunningHeader = () => {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184); // slate-400
+    doc.text('Mihora Resume Intelligence — Candidate Comparison Matrix', marginLeft, 10);
+    doc.text(`Requisition: ${jobTitle} (${jobDepartment})`, pageWidth - marginRight, 10, { align: 'right' });
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(marginLeft, 12, pageWidth - marginRight, 12);
+  };
+
+  const ensureSpace = (neededHeight: number) => {
+    if (currentY + neededHeight > pageHeight - bottomMargin) {
+      doc.addPage();
+      currentY = 18;
+      drawRunningHeader();
+    }
+  };
+
+  // Header Title on Page 1
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.setTextColor(15, 23, 42); // slate-900
+  doc.text('MIHORA RESUME INTELLIGENCE', marginLeft, currentY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139); // slate-500
+  doc.text(
+    `CANDIDATE COMPARISON MATRIX  ·  ${candidates.length} CANDIDATES EVALUATED  ·  ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+    marginLeft,
+    currentY + 5
+  );
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(30, 41, 59);
+  doc.text(`Requisition: ${jobTitle} — Department: ${jobDepartment}`, marginLeft, currentY + 11);
+
+  doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.4);
+  doc.line(marginLeft, currentY + 14, pageWidth - marginRight, currentY + 14);
+
+  currentY += 18;
+
+  // Candidate Overview Cards side-by-side
+  const count = candidates.length;
+  const colGap = 4;
+  const totalGaps = (count - 1) * colGap;
+  const colWidth = (contentWidth - totalGaps) / count;
+
+  // Overview Table
+  ensureSpace(42);
+  doc.setFillColor(248, 250, 252); // slate-50
+  doc.rect(marginLeft, currentY, contentWidth, 38, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(marginLeft, currentY, contentWidth, 38, 'S');
+
+  candidates.forEach((cand, idx) => {
+    const colX = marginLeft + idx * (colWidth + colGap) + 3;
+    const innerWidth = colWidth - 6;
+
+    // Candidate Name
+    const name = cand.candidateOverview?.detectedName || cand.fileName;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    const splitName = doc.splitTextToSize(name, innerWidth);
+    doc.text(splitName.slice(0, 2), colX, currentY + 5);
+
+    // Alignment Badge
+    const level = cand.overallRoleAlignment?.level || 'Moderate alignment';
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    if (level === 'Strong alignment') {
+      doc.setTextColor(5, 150, 105);
+    } else if (level === 'Good alignment') {
+      doc.setTextColor(37, 99, 235);
+    } else if (level === 'Moderate alignment') {
+      doc.setTextColor(217, 119, 6);
+    } else {
+      doc.setTextColor(100, 116, 139);
+    }
+    doc.text(`[ ${level} ]`, colX, currentY + 12);
+
+    // Location & Current Role
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(71, 85, 105);
+    const loc = cand.candidateOverview?.detectedLocation || 'Location: Not specified';
+    const splitLoc = doc.splitTextToSize(loc, innerWidth);
+    doc.text(splitLoc.slice(0, 1), colX, currentY + 18);
+
+    const role = cand.candidateOverview?.currentOrRecentRole || 'Role: Not specified';
+    const splitRole = doc.splitTextToSize(role, innerWidth);
+    doc.text(splitRole.slice(0, 1), colX, currentY + 23);
+
+    const exp = cand.candidateOverview?.experienceSummary || 'Experience: Not specified';
+    const splitExp = doc.splitTextToSize(exp, innerWidth);
+    doc.text(splitExp.slice(0, 2), colX, currentY + 28);
+  });
+
+  currentY += 44;
+
+  // Union of all unique criteria across all candidates
+  const reqMap = new Map<string, string>();
+  candidates.forEach((cand) => {
+    (cand.requirementMatches || []).forEach((rm) => {
+      const norm = rm.requirement.trim();
+      if (norm && !reqMap.has(norm)) {
+        reqMap.set(norm, norm);
+      }
+    });
+  });
+  const allRequirements = Array.from(reqMap.values());
+
+  // Requirements Section Header
+  ensureSpace(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('REQUIREMENTS & EVIDENCE COMPARISON', marginLeft, currentY);
+  currentY += 5;
+
+  // Table Header
+  const reqColWidth = Math.min(65, contentWidth * 0.28);
+  const candColWidth = (contentWidth - reqColWidth) / count;
+
+  ensureSpace(9);
+  doc.setFillColor(241, 245, 249);
+  doc.rect(marginLeft, currentY, contentWidth, 7, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text('JOB REQUIREMENT', marginLeft + 3, currentY + 4.8);
+
+  candidates.forEach((cand, idx) => {
+    const headerX = marginLeft + reqColWidth + idx * candColWidth + 2;
+    const name = cand.candidateOverview?.detectedName || cand.fileName;
+    const truncatedName = name.length > 20 ? `${name.substring(0, 18)}...` : name;
+    doc.text(truncatedName.toUpperCase(), headerX, currentY + 4.8);
+  });
+
+  currentY += 8;
+
+  // Table Rows for each requirement
+  allRequirements.forEach((req) => {
+    const splitReq = doc.splitTextToSize(req, reqColWidth - 5);
+    let maxCellHeight = splitReq.length * 3.8 + 4;
+
+    const candMatches = candidates.map((cand) => {
+      const match = (cand.requirementMatches || []).find(
+        (m) => m.requirement.trim().toLowerCase() === req.toLowerCase()
+      );
+      const status = match ? match.status : 'Not evaluated';
+      const evidence = match ? match.resumeEvidence : 'Not detected';
+      const splitEv = doc.splitTextToSize(evidence, candColWidth - 4);
+      const cellHeight = 4 + 3.2 + Math.min(splitEv.length, 3) * 3.2;
+      if (cellHeight > maxCellHeight) {
+        maxCellHeight = cellHeight;
+      }
+      return { status, splitEv };
+    });
+
+    ensureSpace(maxCellHeight + 2);
+
+    // Row background & separator
+    doc.setDrawColor(241, 245, 249);
+    doc.setFillColor(255, 255, 255);
+    doc.rect(marginLeft, currentY, contentWidth, maxCellHeight, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.line(marginLeft, currentY + maxCellHeight, pageWidth - marginRight, currentY + maxCellHeight);
+
+    // Requirement column text
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(30, 41, 59);
+    doc.text(splitReq, marginLeft + 3, currentY + 4);
+
+    // Candidate columns
+    candidates.forEach((_, idx) => {
+      const cellX = marginLeft + reqColWidth + idx * candColWidth + 2;
+      const data = candMatches[idx];
+
+      // Status label
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      if (data.status === 'Detected') {
+        doc.setTextColor(5, 150, 105);
+      } else if (data.status === 'Partially detected') {
+        doc.setTextColor(217, 119, 6);
+      } else {
+        doc.setTextColor(148, 163, 184);
+      }
+      doc.text(data.status, cellX, currentY + 4);
+
+      // Evidence excerpt
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(data.splitEv.slice(0, 3), cellX, currentY + 7.5);
+    });
+
+    currentY += maxCellHeight;
+  });
+
+  currentY += 6;
+
+  // Strengths & Gaps Side-by-Side Summary
+  ensureSpace(40);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('KEY STRENGTHS & CLARIFICATION AREAS', marginLeft, currentY);
+  currentY += 6;
+
+  candidates.forEach((cand, idx) => {
+    const colX = marginLeft + idx * (colWidth + colGap);
+    const innerW = colWidth - 2;
+
+    doc.setFillColor(248, 250, 252);
+    doc.rect(colX, currentY, colWidth, 32, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(colX, currentY, colWidth, 32, 'S');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text((cand.candidateOverview?.detectedName || cand.fileName).substring(0, 22), colX + 3, currentY + 4.5);
+
+    // Top strengths
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(5, 150, 105);
+    doc.text('Key Strengths:', colX + 3, currentY + 9);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(71, 85, 105);
+    const topStr = (cand.strengths || []).slice(0, 2);
+    let strY = currentY + 13;
+    topStr.forEach((st) => {
+      const splitSt = doc.splitTextToSize(`• ${st}`, innerW - 4);
+      doc.text(splitSt.slice(0, 1), colX + 3, strY);
+      strY += 3.5;
+    });
+
+    // Top gaps
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(217, 119, 6);
+    doc.text('Areas to Clarify:', colX + 3, currentY + 22);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(71, 85, 105);
+    const topGaps = (cand.potentialGaps || []).slice(0, 2);
+    let gapY = currentY + 25.5;
+    topGaps.forEach((gp) => {
+      const splitGp = doc.splitTextToSize(`• ${gp}`, innerW - 4);
+      doc.text(splitGp.slice(0, 1), colX + 3, gapY);
+      gapY += 3.5;
+    });
+  });
+
+  currentY += 38;
+
+  // Fair Hiring & Confidentiality Footer
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(marginLeft, pageHeight - 11, pageWidth - marginRight, pageHeight - 11);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      'Mihora Resume Intelligence — Confidential Candidate Comparison Report · For internal recruitment use only',
+      marginLeft,
+      pageHeight - 7
+    );
+    doc.text(`Page ${i} of ${totalPages}`, pageWidth - marginRight, pageHeight - 7, { align: 'right' });
+  }
+
+  const safeTitle = jobTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
+  doc.save(`${safeTitle}_Candidate_Comparison.pdf`);
 }

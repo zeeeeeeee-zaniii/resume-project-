@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { AnalysisResult, MatchStatus, CandidateRecord, Job, CandidateOutreachLog } from '../types';
 import { CandidateOutreachModal } from './CandidateOutreachModal';
+import { CandidateActivityTimeline } from './CandidateActivityTimeline';
 import { downloadPrintableReport } from '../lib/report-export';
 import { generateCandidatePdfReport } from '../lib/pdf-report-generator';
 
@@ -665,6 +666,21 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
 
           <button
             type="button"
+            onClick={() => {
+              const el = document.getElementById('candidate-activity-timeline-section');
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth' });
+              }
+            }}
+            title="Jump to Candidate Activity Timeline"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-300 rounded-md transition-colors shadow-2xs cursor-pointer"
+          >
+            <Clock className="w-3.5 h-3.5 text-slate-500" />
+            <span>Timeline</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleDownloadPdf}
             disabled={isGeneratingPdf}
             title="Download structured PDF analysis report for offline recruiter review"
@@ -1093,6 +1109,14 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
             </div>
           ))}
         </div>
+      </div>
+
+      {/* 7. Unified Candidate Activity Timeline */}
+      <div id="candidate-activity-timeline-section" className="print:hidden">
+        <CandidateActivityTimeline
+          candidate={candidateRecord}
+          analysis={result}
+        />
       </div>
 
       {/* 8. Analysis Notes & Ethical Disclaimer */}
