@@ -814,6 +814,8 @@ export default function App() {
             currentUserEmail={currentUser?.email || undefined}
             currentUserName={currentUser?.displayName || undefined}
             onSaveOutreachLog={handleSaveCandidateOutreachLog}
+            onUpdateCandidateInterviews={handleUpdateCandidateInterviews}
+            onUpdateCandidateStatus={handleUpdateCandidateStatus}
             onModifyInputs={() => {
               setSelectedResult(null);
               setActiveTab('new-analysis');

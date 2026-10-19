@@ -22,10 +22,14 @@ import {
   ChevronLeft,
   Download,
   ExternalLink,
-  Mail
+  Mail,
+  Calendar,
+  CalendarDays,
+  Video
 } from 'lucide-react';
-import { AnalysisResult, MatchStatus, CandidateRecord, Job, CandidateOutreachLog } from '../types';
+import { AnalysisResult, MatchStatus, CandidateRecord, Job, CandidateOutreachLog, CandidateInterview } from '../types';
 import { CandidateOutreachModal } from './CandidateOutreachModal';
+import { CandidateInterviewModal, getInterviewStatusBadgeStyle } from './CandidateInterviewModal';
 import { CandidateActivityTimeline } from './CandidateActivityTimeline';
 import { downloadPrintableReport } from '../lib/report-export';
 import { generateCandidatePdfReport } from '../lib/pdf-report-generator';
@@ -37,6 +41,8 @@ interface AnalysisResultsProps {
   currentUserEmail?: string;
   currentUserName?: string;
   onSaveOutreachLog?: (candidateIdOrAnalysisId: string, log: CandidateOutreachLog) => Promise<void>;
+  onUpdateCandidateInterviews?: (candidateIdOrAnalysisId: string, interviews: CandidateInterview[]) => Promise<void>;
+  onUpdateCandidateStatus?: (candidateIdOrAnalysisId: string, status: any) => Promise<void>;
   onModifyInputs: () => void;
   onStartNewAnalysis: () => void;
   onReanalyze?: (result: AnalysisResult) => void;
@@ -52,6 +58,8 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   currentUserEmail,
   currentUserName,
   onSaveOutreachLog,
+  onUpdateCandidateInterviews,
+  onUpdateCandidateStatus,
   onModifyInputs,
   onStartNewAnalysis,
   onReanalyze,
@@ -66,6 +74,7 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   const [isPrintableView, setIsPrintableView] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isOutreachModalOpen, setIsOutreachModalOpen] = useState(false);
+  const [isInterviewModalOpen, setIsInterviewModalOpen] = useState(false);
 
   // Reliable detection of sandboxed AI Studio preview iframe:
   // Must be embedded inside an iframe (window.self !== window.top) AND running on an AI Studio preview/dev domain or applet frame.
@@ -664,6 +673,23 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
             )}
           </button>
 
+          {onUpdateCandidateInterviews && (
+            <button
+              type="button"
+              onClick={() => setIsInterviewModalOpen(true)}
+              title="Schedule and manage candidate interviews"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-md transition-colors shadow-2xs cursor-pointer"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Interviews</span>
+              {candidateRecord?.interviews && candidateRecord.interviews.length > 0 && (
+                <span className="text-[9px] bg-purple-200 text-purple-800 font-bold px-1 rounded-full">
+                  {candidateRecord.interviews.length}
+                </span>
+              )}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -1187,6 +1213,19 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
           currentUserEmail={currentUserEmail}
           currentUserName={currentUserName}
           onSaveOutreachLog={onSaveOutreachLog}
+        />
+      )}
+
+      {/* Candidate Interview Modal */}
+      {isInterviewModalOpen && onUpdateCandidateInterviews && (
+        <CandidateInterviewModal
+          isOpen={isInterviewModalOpen}
+          onClose={() => setIsInterviewModalOpen(false)}
+          candidateAnalysis={result}
+          candidateRecord={candidateRecord}
+          currentUserEmail={currentUserEmail}
+          currentUserName={currentUserName}
+          onUpdateCandidateInterviews={onUpdateCandidateInterviews}
         />
       )}
     </div>

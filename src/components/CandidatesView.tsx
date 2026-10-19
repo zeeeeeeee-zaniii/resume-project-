@@ -388,11 +388,30 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
       const updatedInterviews = [...currentInterviews, newRound];
       await onUpdateCandidateInterviews(candidateId, updatedInterviews);
       
+      // Auto-advance candidate stage to Interview if not already in Interview or Hired
+      const shouldAutoAdvance =
+        onUpdateCandidateStatus &&
+        interviewCandidate &&
+        (!interviewCandidate.status ||
+          interviewCandidate.status === 'New' ||
+          interviewCandidate.status === 'Reviewed' ||
+          interviewCandidate.status === 'Screened' ||
+          interviewCandidate.status === 'Reviewing');
+
+      if (shouldAutoAdvance && onUpdateCandidateStatus) {
+        try {
+          await onUpdateCandidateStatus(candidateId, 'Interview');
+        } catch (statusErr) {
+          console.warn('Auto-advance to Interview status non-fatal error:', statusErr);
+        }
+      }
+
       // Update local candidate record reference
       if (interviewCandidate) {
         setInterviewCandidate({
           ...interviewCandidate,
           interviews: updatedInterviews,
+          status: shouldAutoAdvance ? 'Interview' : interviewCandidate.status,
         });
       }
       setIsAddingNewRound(false);
@@ -1139,8 +1158,8 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                               </div>
 
                               <div className="flex items-center gap-1">
-                                {/* Interview Scheduling Action (Available for candidates in Interview stage or any candidate with interviews) */}
-                                {(currentStage === 'Interview' || (matchingRecord?.interviews && matchingRecord.interviews.length > 0)) && (
+                                {/* Interview Scheduling Action */}
+                                {onUpdateCandidateInterviews && (
                                   <button
                                     type="button"
                                     onClick={() => handleOpenInterviewModal(cand)}
@@ -1151,7 +1170,7 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                                     <span>
                                       {matchingRecord?.interviews && matchingRecord.interviews.length > 0
                                         ? `Interviews (${matchingRecord.interviews.length})`
-                                        : 'Schedule'}
+                                        : 'Interview'}
                                     </span>
                                   </button>
                                 )}
@@ -1409,11 +1428,12 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                           </span>
                         </div>
 
-                        {/* Interview Scheduling Action (Available for candidates in Interview stage or any candidate with interviews) */}
-                        {(currentStage === 'Interview' || (matchingRecord?.interviews && matchingRecord.interviews.length > 0)) && (
+                        {/* Interview Scheduling Action */}
+                        {onUpdateCandidateInterviews && (
                           <button
+                            type="button"
                             onClick={() => handleOpenInterviewModal(cand)}
-                            className="p-1.5 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded transition-colors"
+                            className="p-1.5 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded transition-colors relative cursor-pointer"
                             title={
                               matchingRecord?.interviews && matchingRecord.interviews.length > 0
                                 ? `Manage interviews (${matchingRecord.interviews.length} rounds)`
@@ -1421,6 +1441,11 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                             }
                           >
                             <Calendar className="w-4 h-4" />
+                            {matchingRecord?.interviews && matchingRecord.interviews.length > 0 && (
+                              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 text-[8px] bg-purple-600 text-white font-bold rounded-full flex items-center justify-center">
+                                {matchingRecord.interviews.length}
+                              </span>
+                            )}
                           </button>
                         )}
 
