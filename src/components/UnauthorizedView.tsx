@@ -33,7 +33,7 @@ export const UnauthorizedView: React.FC<UnauthorizedViewProps> = ({
           </div>
           <div className="flex items-center gap-2 text-xs font-semibold text-rose-700 bg-rose-50 px-2.5 py-1 rounded border border-rose-200">
             <ShieldAlert className="w-3.5 h-3.5" />
-            <span>Unauthorized Domain</span>
+            <span>Access Restricted</span>
           </div>
         </div>
       </header>
@@ -48,7 +48,7 @@ export const UnauthorizedView: React.FC<UnauthorizedViewProps> = ({
               Access Restricted
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 max-w-sm mx-auto leading-relaxed">
-              Mihora Resume Intelligence is restricted to authorized Mihora Tech personnel.
+              You are signed in, but this account is not authorized to access Mihora Tech's private recruitment workspace.
             </p>
           </div>
 
@@ -56,6 +56,12 @@ export const UnauthorizedView: React.FC<UnauthorizedViewProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-slate-500">Signed-in Account:</span>
               <span className="font-mono font-medium text-slate-900 break-all">{user.email}</span>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-200/80 pt-2">
+              <span className="text-slate-500">Access Status:</span>
+              <span className="font-medium text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200/60">
+                Not Authorized
+              </span>
             </div>
             <div className="flex items-center justify-between border-t border-slate-200/80 pt-2">
               <span className="text-slate-500">Authorized Domains:</span>

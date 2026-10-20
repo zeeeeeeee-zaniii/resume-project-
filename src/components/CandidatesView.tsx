@@ -197,6 +197,8 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
   const [editingInterviewId, setEditingInterviewId] = useState<string | null>(null);
   const [editingStatus, setEditingStatus] = useState<InterviewSlotStatus>('Scheduled');
   const [editingNotes, setEditingNotes] = useState('');
+  const [editingScheduledAt, setEditingScheduledAt] = useState('');
+  const [editingMeetingLink, setEditingMeetingLink] = useState('');
 
   // Helper to resolve candidate record from candidate analysis
   const getCandidateRecord = (cand: AnalysisResult): CandidateRecord | undefined => {
@@ -354,6 +356,12 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
       setInterviewError('Please select an interview date and time.');
       return;
     }
+    const parsedDate = new Date(newScheduledAt);
+    if (isNaN(parsedDate.getTime())) {
+      setInterviewError('Please provide a valid scheduled date and time.');
+      return;
+    }
+
     const interviewersList = newInterviewers
       .split(',')
       .map((s) => s.trim())
@@ -376,8 +384,8 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
         candidateId,
         interviewType: newInterviewType,
         interviewers: interviewersList,
-        scheduledAt: new Date(newScheduledAt).toISOString(),
-        durationMinutes: Number(newDurationMinutes) || 45,
+        scheduledAt: parsedDate.toISOString(),
+        durationMinutes: Math.max(15, Math.min(480, Number(newDurationMinutes) || 45)),
         meetingLinkOrLocation: newMeetingLink.trim() || undefined,
         status: 'Scheduled',
         feedbackNotes: newFeedbackNotes.trim() || undefined,
@@ -429,7 +437,9 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
   const handleUpdateInterviewRoundStatus = async (
     interviewId: string,
     newStatus: InterviewSlotStatus,
-    feedbackNotes?: string
+    feedbackNotes?: string,
+    newScheduledAt?: string,
+    meetingLinkOrLocation?: string
   ) => {
     if (!onUpdateCandidateInterviews) return;
     setIsSavingInterview(true);
@@ -441,9 +451,22 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
       const currentInterviews = interviewCandidate?.interviews || [];
       const updatedInterviews = currentInterviews.map((item) => {
         if (item.id === interviewId) {
+          let updatedScheduledAt = item.scheduledAt;
+          if (newStatus === 'Rescheduled' && newScheduledAt) {
+            const parsed = new Date(newScheduledAt);
+            if (!isNaN(parsed.getTime())) {
+              updatedScheduledAt = parsed.toISOString();
+            }
+          }
+
           return {
             ...item,
             status: newStatus,
+            scheduledAt: updatedScheduledAt,
+            meetingLinkOrLocation:
+              meetingLinkOrLocation !== undefined && meetingLinkOrLocation.trim()
+                ? meetingLinkOrLocation.trim()
+                : item.meetingLinkOrLocation,
             feedbackNotes: feedbackNotes !== undefined ? feedbackNotes : item.feedbackNotes,
             updatedAt: new Date().toISOString(),
           };
@@ -462,6 +485,35 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
     } catch (err: any) {
       console.error('Update interview round error:', err);
       setInterviewError('Failed to update interview round.');
+    } finally {
+      setIsSavingInterview(false);
+    }
+  };
+
+  const handleDeleteInterviewRound = async (interviewId: string) => {
+    if (!onUpdateCandidateInterviews) return;
+    setIsSavingInterview(true);
+    setInterviewError(null);
+    try {
+      const candidateId = interviewCandidate?.id || interviewCandidateAnalysis?.id;
+      if (!candidateId) return;
+
+      const currentInterviews = interviewCandidate?.interviews || [];
+      const updatedInterviews = currentInterviews.filter((item) => item.id !== interviewId);
+
+      await onUpdateCandidateInterviews(candidateId, updatedInterviews);
+      if (interviewCandidate) {
+        setInterviewCandidate({
+          ...interviewCandidate,
+          interviews: updatedInterviews,
+        });
+      }
+      if (editingInterviewId === interviewId) {
+        setEditingInterviewId(null);
+      }
+    } catch (err: any) {
+      console.error('Delete interview round error:', err);
+      setInterviewError('Failed to delete interview round.');
     } finally {
       setIsSavingInterview(false);
     }
@@ -1915,6 +1967,8 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                                   setEditingInterviewId(round.id);
                                   setEditingStatus(round.status);
                                   setEditingNotes(round.feedbackNotes || '');
+                                  setEditingScheduledAt(round.scheduledAt ? new Date(round.scheduledAt).toISOString().slice(0, 16) : '');
+                                  setEditingMeetingLink(round.meetingLinkOrLocation || '');
                                 }}
                                 className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-2 py-1 rounded transition-colors"
                               >
@@ -1965,7 +2019,36 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                                     <option value="Cancelled">Cancelled</option>
                                   </select>
                                 </div>
+
+                                {editingStatus === 'Rescheduled' && (
+                                  <div className="space-y-1">
+                                    <label className="font-semibold text-slate-700 text-[11px] block">
+                                      New Scheduled Date & Time:
+                                    </label>
+                                    <input
+                                      type="datetime-local"
+                                      value={editingScheduledAt}
+                                      onChange={(e) => setEditingScheduledAt(e.target.value)}
+                                      className="w-full p-1.5 bg-white border border-slate-300 rounded text-xs focus:border-purple-600 focus:outline-hidden"
+                                    />
+                                  </div>
+                                )}
                               </div>
+
+                              {editingStatus === 'Rescheduled' && (
+                                <div className="space-y-1">
+                                  <label className="font-semibold text-slate-700 text-[11px] block">
+                                    Updated Meeting Link or Location:
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editingMeetingLink}
+                                    onChange={(e) => setEditingMeetingLink(e.target.value)}
+                                    placeholder="e.g. https://meet.google.com/abc-defg-hij or Conference Room 4B"
+                                    className="w-full p-1.5 bg-white border border-slate-300 rounded text-xs focus:border-purple-600 focus:outline-hidden"
+                                  />
+                                </div>
+                              )}
 
                               <div className="space-y-1">
                                 <label className="font-semibold text-slate-700 text-[11px] block">
@@ -1980,24 +2063,42 @@ export const CandidatesView: React.FC<CandidatesViewProps> = ({
                                 />
                               </div>
 
-                              <div className="flex items-center justify-end gap-2 pt-1">
+                              <div className="flex items-center justify-between gap-2 pt-1">
                                 <button
                                   type="button"
-                                  onClick={() => setEditingInterviewId(null)}
+                                  onClick={() => handleDeleteInterviewRound(round.id)}
                                   disabled={isSavingInterview}
-                                  className="px-3 py-1 text-xs text-slate-600 hover:bg-slate-200/50 rounded"
+                                  className="text-xs text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded transition-colors"
                                 >
-                                  Cancel
+                                  Delete Round
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateInterviewRoundStatus(round.id, editingStatus, editingNotes)}
-                                  disabled={isSavingInterview}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-purple-700 hover:bg-purple-800 rounded shadow-2xs disabled:opacity-60 cursor-pointer"
-                                >
-                                  {isSavingInterview && <Loader2 className="w-3 h-3 animate-spin" />}
-                                  <span>Save Changes</span>
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingInterviewId(null)}
+                                    disabled={isSavingInterview}
+                                    className="px-3 py-1 text-xs text-slate-600 hover:bg-slate-200/50 rounded"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleUpdateInterviewRoundStatus(
+                                        round.id,
+                                        editingStatus,
+                                        editingNotes,
+                                        editingScheduledAt,
+                                        editingMeetingLink
+                                      )
+                                    }
+                                    disabled={isSavingInterview}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-purple-700 hover:bg-purple-800 rounded shadow-2xs disabled:opacity-60 cursor-pointer"
+                                  >
+                                    {isSavingInterview && <Loader2 className="w-3 h-3 animate-spin" />}
+                                    <span>Save Changes</span>
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )}

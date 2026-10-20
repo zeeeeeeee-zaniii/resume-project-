@@ -77,9 +77,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Listen to Firestore Jobs, Candidates, and Analyses when authenticated
+  // Listen to Firestore Jobs, Candidates, and Analyses when authenticated and authorized
   useEffect(() => {
-    if (!currentUser) {
+    const authStatus = currentUser
+      ? checkUserAuthorization(currentUser, strictDomainEnforcement)
+      : { isAuthorized: false };
+
+    if (!currentUser || !authStatus.isAuthorized) {
       setJobsList([]);
       setCandidatesList([]);
       setAnalysesList([]);
@@ -115,7 +119,7 @@ export default function App() {
       unsubCandidates();
       unsubAnalyses();
     };
-  }, [currentUser]);
+  }, [currentUser, strictDomainEnforcement]);
 
   // Auth actions
   const handleSignIn = async () => {
@@ -123,6 +127,9 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
+    setJobsList([]);
+    setCandidatesList([]);
+    setAnalysesList([]);
     setSelectedResult(null);
     setCandidatesToCompare(null);
     setJobForAnalysis(null);
@@ -843,6 +850,10 @@ export default function App() {
                 onViewReminders={() => setActiveTab('reminders')}
                 onViewAnalysisResult={handleViewAnalysisResult}
                 onStartAnalysisForJob={handleStartAnalysisForJob}
+                onOpenCandidateInterviews={(candidateId) => {
+                  setCandidateActionTarget({ candidateId, action: 'interviews' });
+                  setActiveTab('candidates');
+                }}
                 recentResults={analysesList}
                 candidates={candidatesList}
                 jobs={jobsList}

@@ -112,7 +112,7 @@ export const SignInView: React.FC<SignInViewProps> = ({ onSignIn }) => {
 
           <div className="text-center pt-2 border-t border-slate-100">
             <span className="text-[11px] text-slate-500">
-              Mihora Tech Talent Operations · Restricted Access
+              Sign in with any Google account. Access to internal recruiting records requires Mihora Tech authorization.
             </span>
           </div>
         </div>

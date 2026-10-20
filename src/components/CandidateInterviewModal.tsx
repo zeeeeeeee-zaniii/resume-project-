@@ -46,6 +46,10 @@ interface CandidateInterviewModalProps {
     candidateIdOrAnalysisId: string,
     interviews: CandidateInterview[]
   ) => Promise<void>;
+  onUpdateCandidateStatus?: (
+    candidateIdOrAnalysisId: string,
+    status: CandidateRecord['status']
+  ) => Promise<void>;
   currentUserEmail?: string;
   currentUserName?: string;
 }
@@ -56,6 +60,7 @@ export const CandidateInterviewModal: React.FC<CandidateInterviewModalProps> = (
   candidateAnalysis,
   candidateRecord,
   onUpdateCandidateInterviews,
+  onUpdateCandidateStatus,
 }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -175,6 +180,25 @@ export const CandidateInterviewModal: React.FC<CandidateInterviewModalProps> = (
 
       const updatedInterviews = [...interviewsList, newRound];
       await onUpdateCandidateInterviews(candidateTargetId, updatedInterviews);
+
+      // Auto-advance candidate stage to Interview if not already in Interview or Hired
+      if (onUpdateCandidateStatus && candidateTargetId) {
+        const currentStage = candidateRecord?.status;
+        const shouldAutoAdvance =
+          !currentStage ||
+          currentStage === 'New' ||
+          currentStage === 'Reviewed' ||
+          currentStage === 'Screened' ||
+          currentStage === 'Reviewing';
+
+        if (shouldAutoAdvance) {
+          try {
+            await onUpdateCandidateStatus(candidateTargetId, 'Interview');
+          } catch (statusErr) {
+            console.warn('Auto-advance to Interview status non-fatal error:', statusErr);
+          }
+        }
+      }
 
       setIsAddingNewRound(false);
       setNewInterviewers('');

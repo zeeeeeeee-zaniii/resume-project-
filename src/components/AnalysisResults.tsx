@@ -1226,6 +1226,7 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
           currentUserEmail={currentUserEmail}
           currentUserName={currentUserName}
           onUpdateCandidateInterviews={onUpdateCandidateInterviews}
+          onUpdateCandidateStatus={onUpdateCandidateStatus}
         />
       )}
     </div>

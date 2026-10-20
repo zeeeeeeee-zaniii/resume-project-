@@ -30,6 +30,7 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export enum OperationType {
   CREATE = 'create',
@@ -89,12 +90,16 @@ export async function testConnection() {
   }
 }
 
-// Sign in with Google Popup
+// Sign in with Google Popup (accepts any valid Google account)
 export async function signInWithGoogle(): Promise<User | null> {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     if (result.user) {
-      await saveUserProfile(result.user);
+      try {
+        await saveUserProfile(result.user);
+      } catch (profileErr) {
+        console.warn('Note: Profile write deferred or restricted:', profileErr);
+      }
     }
     return result.user;
   } catch (error) {
@@ -119,7 +124,7 @@ export async function saveUserProfile(user: User) {
     await setDoc(doc(db, 'users', user.uid), cleanUndefinedFields({
       userId: user.uid,
       email: user.email || '',
-      displayName: user.displayName || 'Mihora Recruiter',
+      displayName: user.displayName || user.email?.split('@')[0] || 'User',
       createdAt: new Date().toISOString(),
     }), { merge: true });
   } catch (error) {

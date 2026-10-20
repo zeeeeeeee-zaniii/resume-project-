@@ -32,7 +32,7 @@ interface NewAnalysisProps {
   initialResumeFile?: ResumeFile | null;
 }
 
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB limit
+const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB limit (fits safely within Vercel Serverless 4.5MB payload threshold in base64)
 const ALLOWED_EXTENSIONS = ['.pdf', '.docx'];
 
 export const NewAnalysis: React.FC<NewAnalysisProps> = ({
@@ -114,7 +114,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      setFileError('This file exceeds the 10 MB limit. Please select a smaller document.');
+      setFileError('This file exceeds the 3 MB upload limit. Please select a smaller document.');
       return;
     }
 
@@ -280,7 +280,9 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
           } else if (response.status === 403) {
             errorMessage = 'Access denied: your account is not authorized for Mihora Resume Intelligence operations.';
           } else if (response.status === 413) {
-            errorMessage = 'The resume file exceeds the maximum allowed upload size (25MB). Please upload a smaller document.';
+            errorMessage = 'The resume file exceeds the upload size limit (3 MB). Please upload a smaller document.';
+          } else if (response.status === 504) {
+            errorMessage = 'The screening service timed out while processing this document. Please retry or upload a shorter resume.';
           } else if (response.status === 429) {
             const retryAfter = response.headers.get('Retry-After');
             errorMessage = retryAfter
