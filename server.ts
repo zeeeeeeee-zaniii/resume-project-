@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { handleAnalyzeResumeRequest, getHealthStatus } from './src/server/analysis-handler';
+import { handleAnalyzeResumeRequest } from './api/analyze-resume';
 
 dotenv.config();
 
@@ -28,8 +28,14 @@ async function startServer() {
   }
 
   // Health check endpoint
-  app.get('/api/health', (req, res) => {
-    getHealthStatus(req, res);
+  app.get('/api/health', (_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).json({
+      status: 'ok',
+      service: 'Mihora Resume Intelligence',
+      concurrency: { active: 0, queued: 0 },
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // AI-Assisted Resume Screening Analysis Endpoint
