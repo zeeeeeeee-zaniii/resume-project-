@@ -1,14 +1,16 @@
 import { User } from 'firebase/auth';
 
 /**
- * Mihora Tech Company Domain & Authentication Access Policy
- * Restricts internal talent intelligence access to verified Mihora personnel and authorized accounts.
+ * Mihora Tech Access & Identity Policy
+ * Classifies users into:
+ * - RECRUITER: Verified Mihora company personnel (@mihora.tech, @mihora.com) and explicitly approved accounts.
+ * - PUBLIC_USER: Any other authenticated Google account.
  */
 
-// Authorized corporate domains
+// Authorized corporate domains for Mihora Tech
 export const ALLOWED_COMPANY_DOMAINS = ['mihora.tech', 'mihora.com'];
 
-// Configurable allowlist for external talent advisors, auditors, or developers
+// Configurable allowlist for external talent advisors, project evaluators, or developers
 export const EXPLICIT_ALLOWED_EMAILS = [
   'admin@mihora.tech',
   'talent@mihora.tech',
@@ -17,7 +19,11 @@ export const EXPLICIT_ALLOWED_EMAILS = [
   'placework908@gmail.com',
 ];
 
+export type UserRole = 'RECRUITER' | 'PUBLIC_USER';
+
 export interface AuthorizationResult {
+  role: UserRole;
+  isRecruiter: boolean;
   isAuthorized: boolean;
   reason?: string;
   userEmail: string;
@@ -26,19 +32,18 @@ export interface AuthorizationResult {
 }
 
 /**
- * Checks if a signed-in user meets the Mihora Tech access authorization requirements.
- * Safe verification plan:
- * 1. Automatically approves @mihora.tech and @mihora.com accounts
- * 2. Approves accounts in the explicit allowlist
- * 3. In development / initial evaluation preview, gracefully allows the authenticated owner session
- *    while displaying domain policy status in the UI, avoiding accidental lockout.
+ * Checks and classifies the authenticated user.
+ * - Approves corporate accounts and explicit allowlist as RECRUITER.
+ * - Approves all other authenticated Google accounts as PUBLIC_USER.
  */
 export function checkUserAuthorization(
   user: User | null,
-  enforceStrictDomain = true
+  _enforceStrictDomain = true
 ): AuthorizationResult {
   if (!user || !user.email) {
     return {
+      role: 'PUBLIC_USER',
+      isRecruiter: false,
       isAuthorized: false,
       reason: 'No authenticated user or email detected.',
       userEmail: '',
@@ -49,20 +54,25 @@ export function checkUserAuthorization(
   const email = user.email.toLowerCase().trim();
   const domain = email.split('@')[1] || '';
 
-  const isCompanyMember = ALLOWED_COMPANY_DOMAINS.includes(domain);
+  const isCompanyDomain = ALLOWED_COMPANY_DOMAINS.includes(domain);
   const isAllowlisted = EXPLICIT_ALLOWED_EMAILS.map((e) => e.toLowerCase()).includes(email);
 
-  if (isCompanyMember) {
+  if (isCompanyDomain) {
     if (!user.emailVerified) {
+      // Unverified corporate domain emails must verify before recruiter access
       return {
-        isAuthorized: false,
-        reason: 'Please verify your corporate email address before accessing the talent intelligence portal.',
+        role: 'PUBLIC_USER',
+        isRecruiter: false,
+        isAuthorized: true,
+        reason: 'Please verify your corporate email address to unlock recruiter tools. Currently operating in public analysis mode.',
         userEmail: email,
         domain,
         isCompanyMember: false,
       };
     }
     return {
+      role: 'RECRUITER',
+      isRecruiter: true,
       isAuthorized: true,
       userEmail: email,
       domain,
@@ -72,6 +82,8 @@ export function checkUserAuthorization(
 
   if (isAllowlisted) {
     return {
+      role: 'RECRUITER',
+      isRecruiter: true,
       isAuthorized: true,
       userEmail: email,
       domain,
@@ -79,21 +91,11 @@ export function checkUserAuthorization(
     };
   }
 
-  // If strict domain enforcement is active and account is neither company nor allowlisted
-  if (enforceStrictDomain) {
-    return {
-      isAuthorized: false,
-      reason: `Account '${email}' is not from an approved Mihora domain (${ALLOWED_COMPANY_DOMAINS.map((d) => `@${d}`).join(', ')}).`,
-      userEmail: email,
-      domain,
-      isCompanyMember: false,
-    };
-  }
-
-  // Fallback: unauthorized external account
+  // All other authenticated Google accounts are valid PUBLIC_USERs
   return {
-    isAuthorized: false,
-    reason: `Account '${email}' is not authorized. Access to Mihora Resume Intelligence is restricted to authorized personnel.`,
+    role: 'PUBLIC_USER',
+    isRecruiter: false,
+    isAuthorized: true,
     userEmail: email,
     domain,
     isCompanyMember: false,

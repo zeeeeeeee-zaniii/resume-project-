@@ -1,4 +1,5 @@
-export type TabType = 'overview' | 'analytics' | 'reminders' | 'jobs' | 'candidates' | 'settings' | 'new-analysis';
+export type UserRole = 'RECRUITER' | 'PUBLIC_USER';
+export type TabType = 'overview' | 'analytics' | 'reminders' | 'jobs' | 'candidates' | 'settings' | 'new-analysis' | 'my-analyses';
 
 export type ReminderCategory = 'upcoming_interview' | 'overdue_interview' | 'missing_feedback' | 'stalled_stage';
 

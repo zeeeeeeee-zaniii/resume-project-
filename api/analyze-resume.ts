@@ -474,13 +474,10 @@ export async function handleAnalyzeResumeRequest(req: any, res: any) {
     });
   }
 
-  // Corporate authorization policy
+  // Authorization check: all cryptographically verified Firebase users are authorized for resume analysis.
+  // Corporate authorization status is verified to protect internal recruiter operations.
   const authz = checkCorporateAuthorization(verification.user);
-  if (!authz.authorized) {
-    return res.status(403).json({
-      error: authz.reason || 'Forbidden: user account is not authorized for Mihora Resume Intelligence operations.',
-    });
-  }
+  const isRecruiter = authz.authorized;
 
   // User-ID-based rate limiter
   const rateCheck = checkUserRateLimit(verification.user.uid);
@@ -543,12 +540,24 @@ export async function handleAnalyzeResumeRequest(req: any, res: any) {
       requirements = '',
     } = body || {};
 
-    // 1. Validation: Job description required
-    if (!jobDescription || typeof jobDescription !== 'string' || !jobDescription.trim()) {
+    // 1. Validation: Job description or target title required
+    const effectiveJobTitle = typeof jobTitle === 'string' ? jobTitle.trim() : '';
+    let effectiveJobDescription = typeof jobDescription === 'string' ? jobDescription.trim() : '';
+
+    if (!effectiveJobDescription && !effectiveJobTitle) {
       return res.status(400).json({
-        error: 'Please provide a job description before starting the analysis.',
+        error: 'Please provide a target job title or pasted job description before starting the analysis.',
       });
     }
+
+    if (!effectiveJobDescription && effectiveJobTitle) {
+      effectiveJobDescription = `Target Role: ${effectiveJobTitle}. Analyze candidate qualifications, core competencies, relevant work history, and alignment with industry standards for this position.`;
+    }
+
+    // Only authorized corporate recruiters can link an analysis to an internal company job requisition
+    const effectiveJobId = isRecruiter && typeof jobId === 'string' && jobId.trim()
+      ? jobId.trim()
+      : undefined;
 
     // 2. Validation: Resume base64 payload required
     if (!fileBase64 || typeof fileBase64 !== 'string' || fileBase64.trim().length === 0) {
@@ -670,7 +679,7 @@ export async function handleAnalyzeResumeRequest(req: any, res: any) {
       });
     }
 
-    let roleSpecText = `Target Job Title: ${jobTitle.trim() || 'Role Requirements'}\nTarget Department / Team: ${department.trim() || 'Not specified'}\n\n[JOB DESCRIPTION PROVIDED BY RECRUITER]\n${jobDescription.trim()}`;
+    let roleSpecText = `Target Job Title: ${effectiveJobTitle || 'Target Position'}\nTarget Department / Team: ${department.trim() || 'Not specified'}\n\n[JOB SPECIFICATION & ROLE REQUIREMENTS]\n${effectiveJobDescription}`;
     if (responsibilities && responsibilities.trim()) {
       roleSpecText += `\n\n[SPECIFIC RESPONSIBILITIES]\n${responsibilities.trim()}`;
     }
@@ -956,7 +965,7 @@ CORE ETHICAL & FACTUAL MANDATES:
 
     const analysisResult = {
       id: `analysis-${Date.now()}`,
-      jobId: jobId || undefined,
+      jobId: effectiveJobId,
       analyzedAt: new Date().toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',

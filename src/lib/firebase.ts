@@ -542,3 +542,122 @@ export function subscribeToUserAnalyses(
     return () => {};
   }
 }
+
+/* =========================================================================
+   PERSONAL ANALYSES (PUBLIC USER ISOLATED SUBCOLLECTION)
+   Saved at: /users/{userId}/analyses/{analysisId}
+   Strictly isolated to the owner; inaccessible to recruiters or other users.
+   ========================================================================= */
+
+export async function savePersonalAnalysisToFirestore(
+  analysis: AnalysisResult,
+  user: User
+) {
+  const path = `users/${user.uid}/analyses/${analysis.id}`;
+  try {
+    const payload = cleanUndefinedFields({
+      id: analysis.id,
+      userId: user.uid,
+      fileName: analysis.fileName,
+      candidateName: analysis.candidateOverview.detectedName || '',
+      candidateLocation: analysis.candidateOverview.detectedLocation || '',
+      jobTitle: analysis.roleSummary.jobTitle,
+      department: analysis.roleSummary.department || '',
+      extractedSummary: analysis.roleSummary.extractedSummary,
+      alignmentLevel: analysis.overallRoleAlignment.level,
+      alignmentSummary: analysis.overallRoleAlignment.summary,
+      hasLimitedInformation: Boolean(analysis.hasLimitedInformation),
+      candidateOverview: analysis.candidateOverview,
+      roleSummary: analysis.roleSummary,
+      requirementMatches: analysis.requirementMatches,
+      strengths: analysis.strengths,
+      potentialGaps: analysis.potentialGaps,
+      interviewFocus: analysis.interviewFocus,
+      overallRoleAlignment: analysis.overallRoleAlignment,
+      analyzedAt: analysis.analyzedAt,
+      createdAt: new Date().toISOString(),
+    });
+
+    await setDoc(doc(db, 'users', user.uid, 'analyses', analysis.id), payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function deletePersonalAnalysisFromFirestore(
+  userId: string,
+  analysisId: string
+) {
+  const path = `users/${userId}/analyses/${analysisId}`;
+  try {
+    await deleteDoc(doc(db, 'users', userId, 'analyses', analysisId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export function subscribeToUserPersonalAnalyses(
+  userId: string,
+  onData: (analyses: AnalysisResult[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = `users/${userId}/analyses`;
+  try {
+    const collRef = collection(db, 'users', userId, 'analyses');
+
+    return onSnapshot(
+      collRef,
+      (snapshot) => {
+        const records: AnalysisResult[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          records.push({
+            id: data.id || docSnap.id,
+            analyzedAt: data.analyzedAt || 'Recent',
+            fileName: data.fileName || 'Resume Document',
+            candidateOverview: {
+              detectedName: data.candidateOverview?.detectedName || data.candidateName || null,
+              detectedLocation: data.candidateOverview?.detectedLocation || data.candidateLocation || null,
+              currentOrRecentRole: data.candidateOverview?.currentOrRecentRole || null,
+              experienceSummary: data.candidateOverview?.experienceSummary || null,
+              keySkillsDetected: Array.isArray(data.candidateOverview?.keySkillsDetected)
+                ? data.candidateOverview.keySkillsDetected
+                : [],
+              education: Array.isArray(data.candidateOverview?.education)
+                ? data.candidateOverview.education
+                : [],
+              certifications: Array.isArray(data.candidateOverview?.certifications)
+                ? data.candidateOverview.certifications
+                : [],
+            },
+            roleSummary: data.roleSummary || {
+              jobTitle: data.jobTitle || 'Role',
+              department: data.department || '',
+              extractedSummary: data.extractedSummary || '',
+            },
+            requirementMatches: data.requirementMatches || [],
+            strengths: data.strengths || [],
+            potentialGaps: data.potentialGaps || [],
+            interviewFocus: data.interviewFocus || [],
+            overallRoleAlignment: data.overallRoleAlignment || {
+              level: data.alignmentLevel || 'Good alignment',
+              summary: data.alignmentSummary || '',
+            },
+            hasLimitedInformation: Boolean(data.hasLimitedInformation),
+          });
+        });
+
+        // Sort latest first
+        records.sort((a, b) => b.id.localeCompare(a.id));
+        onData(records);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, path);
+        if (onError) onError(error);
+      }
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+    return () => {};
+  }
+}

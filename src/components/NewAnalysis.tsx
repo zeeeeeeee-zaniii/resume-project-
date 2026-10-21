@@ -4,15 +4,16 @@ import {
   AlertCircle, 
   Loader2, 
   RefreshCw, 
-  Trash2,
-  FileText,
-  Briefcase,
-  ChevronDown,
-  Plus,
-  CheckCircle2,
-  MapPin,
-  Building2,
-  Info
+  Trash2, 
+  FileText, 
+  Briefcase, 
+  ChevronDown, 
+  Plus, 
+  CheckCircle2, 
+  Building2, 
+  Info,
+  Sparkles,
+  Target
 } from 'lucide-react';
 import { ResumeFile, AnalysisResult, Job } from '../types';
 import { auth } from '../lib/firebase';
@@ -26,14 +27,24 @@ interface NewAnalysisProps {
     result: AnalysisResult,
     resumeFile: ResumeFile | null,
     description: string,
-    job: Job
+    job?: Job | null
   ) => void;
   onCancel: () => void;
   initialResumeFile?: ResumeFile | null;
+  isRecruiter?: boolean;
 }
 
 const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB limit (fits safely within Vercel Serverless 4.5MB payload threshold in base64)
 const ALLOWED_EXTENSIONS = ['.pdf', '.docx'];
+
+const SAMPLE_ROLE_PRESETS = [
+  { title: 'Full Stack Engineer', department: 'Engineering' },
+  { title: 'Frontend Developer', department: 'Engineering' },
+  { title: 'Backend / Systems Engineer', department: 'Engineering' },
+  { title: 'Product Manager', department: 'Product' },
+  { title: 'Data Scientist / ML Engineer', department: 'Data & Analytics' },
+  { title: 'DevOps / Cloud Architect', department: 'Infrastructure' },
+];
 
 export const NewAnalysis: React.FC<NewAnalysisProps> = ({
   jobs,
@@ -43,14 +54,24 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
   onAnalysisCompleted,
   onCancel,
   initialResumeFile = null,
+  isRecruiter = false,
 }) => {
-  // Selected Job State
+  // Target Mode: 'requisition' for recruiters selecting from company jobs, 'custom' for user-provided role
+  const [targetMode, setTargetMode] = useState<'requisition' | 'custom'>(() => {
+    return isRecruiter && jobs.length > 0 ? 'requisition' : 'custom';
+  });
+
+  // Selected Requisition State
   const [activeJobId, setActiveJobId] = useState<string>(() => {
     if (selectedJobId) return selectedJobId;
-    // Default to first open job if available
     const openJob = jobs.find((j) => j.status === 'Open');
     return openJob ? openJob.id : jobs[0]?.id || '';
   });
+
+  // Custom Target State (for public users or custom recruiter analyses)
+  const [customJobTitle, setCustomJobTitle] = useState('');
+  const [customDepartment, setCustomDepartment] = useState('');
+  const [customDescription, setCustomDescription] = useState('');
 
   const currentJob = jobs.find((j) => j.id === activeJobId) || null;
 
@@ -58,6 +79,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
   useEffect(() => {
     if (selectedJobId) {
       setActiveJobId(selectedJobId);
+      setTargetMode('requisition');
     }
   }, [selectedJobId]);
 
@@ -120,7 +142,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
 
     try {
       const base64 = await readFileAsBase64(file);
-      const newResume: ResumeFile = {
+      const newResumeFile: ResumeFile = {
         file,
         name: file.name,
         size: file.size,
@@ -129,18 +151,24 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
         uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         base64,
       };
-
-      setResumeFile(newResume);
+      setResumeFile(newResumeFile);
       setFileBase64(base64);
     } catch {
-      setFileError('Unable to process this file. Please check file permissions or format.');
+      setFileError('Failed to read the file. Please check permissions and try again.');
+    }
+  };
+
+  const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      validateAndProcessFile(file);
     }
   };
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isDragging) setIsDragging(true);
+    setIsDragging(true);
   };
 
   const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
@@ -153,17 +181,9 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-
-    const droppedFiles = e.dataTransfer.files;
-    if (droppedFiles && droppedFiles.length > 0) {
-      validateAndProcessFile(droppedFiles[0]);
-    }
-  };
-
-  const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = e.target.files;
-    if (selectedFiles && selectedFiles.length > 0) {
-      validateAndProcessFile(selectedFiles[0]);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      validateAndProcessFile(file);
     }
   };
 
@@ -180,20 +200,38 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
     fileInputRef.current?.click();
   };
 
-  // Readiness validation
-  const hasValidJob = currentJob !== null;
-  const hasValidResume = resumeFile !== null && fileBase64 !== null && !fileError;
-  const canAnalyze = hasValidJob && hasValidResume && !isProcessing;
+  const applyPresetRole = (preset: { title: string; department: string }) => {
+    setCustomJobTitle(preset.title);
+    setCustomDepartment(preset.department);
+    if (!customDescription.trim()) {
+      setCustomDescription(
+        `Target role: ${preset.title} (${preset.department}). Evaluate core technical capabilities, relevant domain experience, problem-solving, and alignment with industry standards for this position.`
+      );
+    }
+  };
 
-  // Real AI Analysis Execution
+  // Determine if ready to analyze
+  const hasRoleSpecification =
+    targetMode === 'requisition'
+      ? Boolean(currentJob)
+      : Boolean(customJobTitle.trim() || customDescription.trim());
+
+  const canAnalyze = Boolean(fileBase64 && hasRoleSpecification && !isProcessing);
+
+  // Submit Analysis Request
   const handleAnalyzeResume = async () => {
-    if (!currentJob) {
-      setProcessingError('Please select or create a job requisition first.');
+    if (!fileBase64 || !resumeFile) {
+      setFileError('Please upload a resume before continuing.');
       return;
     }
 
-    if (!resumeFile || !fileBase64) {
-      setFileError('Please upload a PDF or DOCX resume.');
+    if (targetMode === 'requisition' && !currentJob) {
+      setProcessingError('Please select a job requisition to evaluate this candidate against.');
+      return;
+    }
+
+    if (targetMode === 'custom' && !customJobTitle.trim() && !customDescription.trim()) {
+      setProcessingError('Please provide a target job title or pasted job description.');
       return;
     }
 
@@ -201,7 +239,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
     setProcessingError(null);
     setIsProcessing(true);
 
-    // Staged professional status messaging
+    // Staged status messaging
     setProcessingStage('Reading resume...');
 
     const timer1 = setTimeout(() => {
@@ -229,7 +267,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
         return;
       }
 
-      // Obtain cryptographically signed Firebase ID token for request authentication
+      // Obtain Firebase ID token
       let idToken = '';
       try {
         idToken = await currentUser.getIdToken();
@@ -246,6 +284,22 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
         return;
       }
 
+      const isUsingJobRequisition = targetMode === 'requisition' && Boolean(currentJob);
+
+      const payload = {
+        fileBase64,
+        fileName: resumeFile.name,
+        fileType: resumeFile.type,
+        jobId: isUsingJobRequisition ? currentJob!.id : undefined,
+        jobTitle: isUsingJobRequisition ? currentJob!.title.trim() : customJobTitle.trim() || 'Target Position',
+        department: isUsingJobRequisition ? currentJob!.department.trim() : customDepartment.trim() || 'General',
+        jobDescription: isUsingJobRequisition
+          ? currentJob!.description.trim()
+          : customDescription.trim() || `Target Role: ${customJobTitle.trim()}`,
+        responsibilities: isUsingJobRequisition ? currentJob!.responsibilities || '' : '',
+        requirements: isUsingJobRequisition ? currentJob!.requirements || '' : '',
+      };
+
       const response = await fetch('/api/analyze-resume', {
         method: 'POST',
         headers: {
@@ -253,17 +307,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
           'Authorization': `Bearer ${idToken}`,
         },
         signal: controller.signal,
-        body: JSON.stringify({
-          fileBase64,
-          fileName: resumeFile.name,
-          fileType: resumeFile.type,
-          jobId: currentJob.id,
-          jobTitle: currentJob.title.trim(),
-          department: currentJob.department.trim(),
-          jobDescription: currentJob.description.trim(),
-          responsibilities: currentJob.responsibilities || '',
-          requirements: currentJob.requirements || '',
-        }),
+        body: JSON.stringify(payload),
       });
 
       clearTimeout(timeoutId);
@@ -278,7 +322,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
           if (response.status === 401) {
             errorMessage = 'Authentication failed or session expired. Please sign in again.';
           } else if (response.status === 403) {
-            errorMessage = 'Access denied: your account is not authorized for Mihora Resume Intelligence operations.';
+            errorMessage = 'Access denied: your account is not authorized for this operation.';
           } else if (response.status === 413) {
             errorMessage = 'The resume file exceeds the upload size limit (3 MB). Please upload a smaller document.';
           } else if (response.status === 504) {
@@ -298,10 +342,18 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
       }
 
       const result: AnalysisResult = await response.json();
-      result.jobId = currentJob.id;
       result.resumeBase64 = fileBase64;
+      if (isUsingJobRequisition && currentJob) {
+        result.jobId = currentJob.id;
+      }
+
       setIsProcessing(false);
-      onAnalysisCompleted(result, resumeFile, currentJob.description, currentJob);
+      onAnalysisCompleted(
+        result,
+        resumeFile,
+        payload.jobDescription,
+        isUsingJobRequisition ? currentJob : null
+      );
     } catch (fetchErr: any) {
       clearTimeout(timeoutId);
       clearTimeout(timer1);
@@ -321,11 +373,13 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Analyze Candidate Resume
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+            {isRecruiter ? 'Screen Candidate Resume' : 'Analyze Personal Resume'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            Evaluate candidate credentials against position specifications using evidence-based screening.
+            {isRecruiter
+              ? 'Evaluate candidate credentials against internal position specifications using evidence-based screening.'
+              : 'Upload your resume and evaluate your qualifications, strengths, and alignment with your target role.'}
           </p>
         </div>
 
@@ -348,122 +402,206 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
           </div>
           <button
             onClick={() => setProcessingError(null)}
-            className="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1"
+            className="text-xs text-red-700 hover:text-red-900 underline ml-auto shrink-0 cursor-pointer"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* Two Column Layout: Left = Job Requisition Selector & Criteria, Right = Resume Upload */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      {/* Form Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left Column: Job Selection & Pre-loaded Specifications */}
+        {/* Left Column: Target Role Specifications */}
         <div className="lg:col-span-5 space-y-4">
           <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
-            <div className="flex items-center justify-between">
+            
+            {/* Header & Mode Switcher if Recruiter */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
-                <Briefcase className="w-3.5 h-3.5 text-blue-700" />
-                <span>Job Requisition</span>
+                <Target className="w-3.5 h-3.5 text-blue-700" />
+                <span>Target Role Specifications</span>
               </label>
 
-              {onCreateJobClick && (
-                <button
-                  type="button"
-                  onClick={onCreateJobClick}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>New Job</span>
-                </button>
+              {isRecruiter && jobs.length > 0 && (
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setTargetMode('requisition')}
+                    className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                      targetMode === 'requisition'
+                        ? 'bg-white text-blue-700 font-semibold shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Job Requisition
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTargetMode('custom')}
+                    className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                      targetMode === 'custom'
+                        ? 'bg-white text-blue-700 font-semibold shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Custom Role
+                  </button>
+                </div>
               )}
             </div>
 
-            {jobs.length === 0 ? (
-              <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 space-y-2">
-                <p className="font-semibold">No jobs found in your recruitment workspace.</p>
-                <p>Please create a job requisition first so the candidate can be evaluated against verified role requirements.</p>
-                {onCreateJobClick && (
-                  <button
-                    onClick={onCreateJobClick}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white font-medium rounded text-xs transition-colors cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Create Job Now</span>
-                  </button>
-                )}
-              </div>
-            ) : (
+            {/* Requisition Mode (Recruiters) */}
+            {targetMode === 'requisition' && isRecruiter && (
               <div className="space-y-3">
-                <div className="relative">
-                  <select
-                    value={activeJobId}
-                    onChange={(e) => {
-                      setActiveJobId(e.target.value);
-                      const j = jobs.find((x) => x.id === e.target.value);
-                      if (j && onSelectJob) onSelectJob(j);
-                    }}
-                    className="w-full pl-3 pr-8 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-semibold focus:bg-white focus:border-blue-600 focus:outline-hidden appearance-none cursor-pointer"
-                  >
-                    {jobs.map((job) => (
-                      <option key={job.id} value={job.id}>
-                        {job.title} ({job.department}) {job.status !== 'Open' ? `[${job.status}]` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-
-                {currentJob && (
-                  <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-2 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 text-sm">
-                        {currentJob.title}
-                      </span>
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
-                          currentJob.status === 'Open'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : currentJob.status === 'On Hold'
-                            ? 'bg-amber-50 text-amber-700 border-amber-200'
-                            : currentJob.status === 'Draft'
-                            ? 'bg-slate-100 text-slate-700 border border-slate-300'
-                            : 'bg-slate-100 text-slate-600 border border-slate-200'
-                        }`}
+                {jobs.length === 0 ? (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 space-y-2">
+                    <p className="font-semibold">No jobs found in your recruitment workspace.</p>
+                    <p>Switch to custom role or create a new job requisition.</p>
+                    {onCreateJobClick && (
+                      <button
+                        onClick={onCreateJobClick}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white font-medium rounded text-xs transition-colors cursor-pointer"
                       >
-                        {currentJob.status}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 text-slate-500 text-[11px]">
-                      <span className="font-medium text-slate-700">{currentJob.department}</span>
-                      {currentJob.location && (
-                        <span>· {currentJob.location}</span>
-                      )}
-                      {currentJob.employmentType && (
-                        <span>· {currentJob.employmentType}</span>
-                      )}
-                    </div>
-
-                    <div className="pt-2 border-t border-slate-200 space-y-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                        Job Description Preview
-                      </span>
-                      <p className="text-slate-600 line-clamp-4 leading-relaxed font-sans">
-                        {currentJob.description}
-                      </p>
-                    </div>
-
-                    {(currentJob.responsibilities || currentJob.requirements) && (
-                      <div className="pt-2 border-t border-slate-200 text-[11px] text-slate-500 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Includes custom responsibilities & qualification criteria</span>
-                      </div>
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Create Job Now</span>
+                      </button>
                     )}
                   </div>
+                ) : (
+                  <>
+                    <div className="relative">
+                      <select
+                        value={activeJobId}
+                        onChange={(e) => {
+                          setActiveJobId(e.target.value);
+                          const j = jobs.find((x) => x.id === e.target.value);
+                          if (j && onSelectJob) onSelectJob(j);
+                        }}
+                        className="w-full pl-3 pr-8 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-semibold focus:bg-white focus:border-blue-600 focus:outline-hidden appearance-none cursor-pointer"
+                      >
+                        {jobs.map((job) => (
+                          <option key={job.id} value={job.id}>
+                            {job.title} ({job.department}) {job.status !== 'Open' ? `[${job.status}]` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+
+                    {currentJob && (
+                      <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 text-sm">
+                            {currentJob.title}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                              currentJob.status === 'Open'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : currentJob.status === 'On Hold'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                            }`}
+                          >
+                            {currentJob.status}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-slate-500 text-[11px]">
+                          <span className="font-medium text-slate-700">{currentJob.department}</span>
+                          {currentJob.location && <span>· {currentJob.location}</span>}
+                          {currentJob.employmentType && <span>· {currentJob.employmentType}</span>}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-200 space-y-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                            Job Description Preview
+                          </span>
+                          <p className="text-slate-600 line-clamp-4 leading-relaxed font-sans">
+                            {currentJob.description}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
+
+            {/* Custom Target Mode (Public Users & Custom Analyses) */}
+            {targetMode === 'custom' && (
+              <div className="space-y-4">
+                {/* Job Title Input */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
+                    <span>Target Job Title *</span>
+                    <span className="text-[11px] text-slate-400 font-normal">e.g. Full Stack Engineer</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={customJobTitle}
+                    onChange={(e) => setCustomJobTitle(e.target.value)}
+                    placeholder="Enter target role title..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
+                  />
+                </div>
+
+                {/* Preset Suggestions */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-medium text-slate-500">Quick role suggestions:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SAMPLE_ROLE_PRESETS.map((preset) => (
+                      <button
+                        key={preset.title}
+                        type="button"
+                        onClick={() => applyPresetRole(preset)}
+                        className={`text-[11px] px-2 py-1 rounded-md border transition-colors cursor-pointer ${
+                          customJobTitle === preset.title
+                            ? 'bg-blue-50 text-blue-700 border-blue-300 font-semibold'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        {preset.title}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Department / Industry (Optional) */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700">
+                    Department or Domain (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={customDepartment}
+                    onChange={(e) => setCustomDepartment(e.target.value)}
+                    placeholder="e.g. Engineering, Product, Marketing..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
+                  />
+                </div>
+
+                {/* Job Description / Requirements Textarea */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
+                    <span>Job Description or Requirements</span>
+                    <span className="text-[11px] text-slate-400 font-normal">Pasted JD or qualifications</span>
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={customDescription}
+                    onChange={(e) => setCustomDescription(e.target.value)}
+                    placeholder="Paste the job description, core responsibilities, or qualification checklist you want to evaluate your resume against..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all font-sans leading-relaxed resize-y"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Tip: If left blank, the system evaluates against standard industry benchmarks for the target title.
+                  </p>
+                </div>
+              </div>
+            )}
+
           </div>
         </div>
 
@@ -472,10 +610,10 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
           <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                Upload Candidate Resume
+                Upload Resume Document
               </h3>
               <p className="text-xs text-slate-500">
-                Upload a candidate document in PDF or DOCX format. Text and structure will be extracted directly.
+                Upload your document in PDF or DOCX format (up to 3 MB). Content and credentials are read securely.
               </p>
             </div>
 
@@ -494,7 +632,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-150 flex flex-col items-center justify-center gap-3 ${
+                className={`border-2 border-dashed rounded-xl p-8 sm:p-10 text-center cursor-pointer transition-all duration-150 flex flex-col items-center justify-center gap-3 ${
                   isDragging
                     ? 'border-blue-600 bg-blue-50/50'
                     : 'border-slate-300 hover:border-slate-400 bg-slate-50/50 hover:bg-slate-50'
@@ -505,10 +643,10 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
                 </div>
                 <div className="space-y-1">
                   <div className="text-xs sm:text-sm font-semibold text-slate-800">
-                    <span className="text-blue-700 hover:underline">Click to upload</span> or drag and drop
+                    <span className="text-blue-700 hover:underline">Click to upload resume</span> or drag and drop
                   </div>
                   <div className="text-xs text-slate-500">
-                    PDF or DOCX documents up to 10 MB
+                    PDF or DOCX documents up to 3 MB
                   </div>
                 </div>
               </div>
@@ -522,13 +660,13 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
                     <div className="text-xs sm:text-sm font-bold text-slate-900 truncate">
                       {resumeFile.name}
                     </div>
-                    <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-1.5 sm:gap-2">
                       <span className="font-semibold text-blue-700 bg-blue-50 px-1 rounded border border-blue-200/50">
                         {resumeFile.type}
                       </span>
                       <span>{resumeFile.formattedSize}</span>
                       <span>·</span>
-                      <span>Ready for analysis</span>
+                      <span className="text-emerald-700 font-medium">Ready for analysis</span>
                     </div>
                   </div>
                 </div>
@@ -538,7 +676,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
                     type="button"
                     onClick={handleTriggerReplace}
                     disabled={isProcessing}
-                    className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded transition-colors"
+                    className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded transition-colors cursor-pointer"
                     title="Replace file"
                   >
                     <RefreshCw className="w-4 h-4" />
@@ -547,7 +685,7 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
                     type="button"
                     onClick={handleRemoveFile}
                     disabled={isProcessing}
-                    className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors"
+                    className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors cursor-pointer"
                     title="Remove file"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -564,17 +702,17 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
             )}
 
             {/* Analysis Action Box */}
-            <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
               <div className="text-xs text-slate-500 flex items-center gap-1.5">
-                <Info className="w-3.5 h-3.5 text-slate-400" />
-                <span>Evidence-based matching strictly against selected job requirements</span>
+                <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span>Evidence-based matching strictly against provided role criteria</span>
               </div>
 
               <button
                 type="button"
                 onClick={handleAnalyzeResume}
                 disabled={!canAnalyze}
-                className="w-full sm:w-auto px-6 py-2.5 bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-2xs transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full sm:w-auto px-6 py-2.5 bg-blue-700 hover:bg-blue-800 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-2xs transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer shrink-0"
               >
                 {isProcessing ? (
                   <>
@@ -582,7 +720,10 @@ export const NewAnalysis: React.FC<NewAnalysisProps> = ({
                     <span>{processingStage}</span>
                   </>
                 ) : (
-                  <span>Analyze Resume</span>
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Analyze Resume</span>
+                  </>
                 )}
               </button>
             </div>

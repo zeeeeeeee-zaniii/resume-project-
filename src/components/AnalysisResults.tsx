@@ -49,6 +49,7 @@ interface AnalysisResultsProps {
   onDeleteAnalysis?: (analysisId: string) => Promise<void>;
   onBackToJob?: (jobId: string) => void;
   onBackToCandidates?: () => void;
+  onBackToAnalyses?: () => void;
 }
 
 export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
@@ -66,6 +67,7 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   onDeleteAnalysis,
   onBackToJob,
   onBackToCandidates,
+  onBackToAnalyses,
 }) => {
   const [filterState, setFilterState] = useState<'all' | MatchStatus>('all');
   const [isDeleting, setIsDeleting] = useState(false);
@@ -629,6 +631,17 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
             </button>
           )}
 
+          {onBackToAnalyses && (
+            <button
+              type="button"
+              onClick={onBackToAnalyses}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-300 px-3 py-1.5 rounded-md transition-colors cursor-pointer"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Back to My Analyses</span>
+            </button>
+          )}
+
           {result.jobId && onBackToJob && (
             <button
               type="button"
@@ -658,22 +671,24 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() => setIsOutreachModalOpen(true)}
-            title="Draft personalized, grounded candidate email outreach"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors shadow-2xs cursor-pointer"
-          >
-            <Mail className="w-3.5 h-3.5" />
-            <span>Draft Outreach</span>
-            {candidateRecord?.outreachLogs && candidateRecord.outreachLogs.length > 0 && (
-              <span className="text-[9px] bg-blue-200 text-blue-800 font-bold px-1 rounded-full">
-                {candidateRecord.outreachLogs.length}
-              </span>
-            )}
-          </button>
+          {candidateRecord && (
+            <button
+              type="button"
+              onClick={() => setIsOutreachModalOpen(true)}
+              title="Draft personalized, grounded candidate email outreach"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors shadow-2xs cursor-pointer"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>Draft Outreach</span>
+              {candidateRecord?.outreachLogs && candidateRecord.outreachLogs.length > 0 && (
+                <span className="text-[9px] bg-blue-200 text-blue-800 font-bold px-1 rounded-full">
+                  {candidateRecord.outreachLogs.length}
+                </span>
+              )}
+            </button>
+          )}
 
-          {onUpdateCandidateInterviews && (
+          {candidateRecord && onUpdateCandidateInterviews && (
             <button
               type="button"
               onClick={() => setIsInterviewModalOpen(true)}
@@ -690,20 +705,22 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() => {
-              const el = document.getElementById('candidate-activity-timeline-section');
-              if (el) {
-                el.scrollIntoView({ behavior: 'smooth' });
-              }
-            }}
-            title="Jump to Candidate Activity Timeline"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-300 rounded-md transition-colors shadow-2xs cursor-pointer"
-          >
-            <Clock className="w-3.5 h-3.5 text-slate-500" />
-            <span>Timeline</span>
-          </button>
+          {candidateRecord && (
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('candidate-activity-timeline-section');
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth' });
+                }
+              }}
+              title="Jump to Candidate Activity Timeline"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-300 rounded-md transition-colors shadow-2xs cursor-pointer"
+            >
+              <Clock className="w-3.5 h-3.5 text-slate-500" />
+              <span>Timeline</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -1137,13 +1154,15 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
         </div>
       </div>
 
-      {/* 7. Unified Candidate Activity Timeline */}
-      <div id="candidate-activity-timeline-section" className="print:hidden">
-        <CandidateActivityTimeline
-          candidate={candidateRecord}
-          analysis={result}
-        />
-      </div>
+      {/* 7. Unified Candidate Activity Timeline (Recruiter Workspace) */}
+      {candidateRecord && (
+        <div id="candidate-activity-timeline-section" className="print:hidden">
+          <CandidateActivityTimeline
+            candidate={candidateRecord}
+            analysis={result}
+          />
+        </div>
+      )}
 
       {/* 8. Analysis Notes & Ethical Disclaimer */}
       <div className="bg-slate-50 border border-slate-200 print:border-slate-300 rounded-lg p-4 text-xs text-slate-600 space-y-1 print:break-inside-avoid">

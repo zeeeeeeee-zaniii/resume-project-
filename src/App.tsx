@@ -11,6 +11,7 @@ import { CandidateComparison } from './components/CandidateComparison';
 import { CandidatesView } from './components/CandidatesView';
 import { RemindersView } from './components/RemindersView';
 import { SettingsView } from './components/SettingsView';
+import { MyAnalysesView } from './components/MyAnalysesView';
 import { computeHiringReminders } from './lib/reminder-helpers';
 import { SignInView } from './components/SignInView';
 import { UnauthorizedView } from './components/UnauthorizedView';
@@ -30,7 +31,10 @@ import {
   subscribeToUserCandidates,
   saveAnalysisToFirestore, 
   deleteAnalysisFromFirestore,
-  subscribeToUserAnalyses
+  subscribeToUserAnalyses,
+  savePersonalAnalysisToFirestore,
+  deletePersonalAnalysisFromFirestore,
+  subscribeToUserPersonalAnalyses
 } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { Loader2 } from 'lucide-react';
@@ -48,6 +52,7 @@ export default function App() {
   const [jobsList, setJobsList] = useState<Job[]>([]);
   const [candidatesList, setCandidatesList] = useState<CandidateRecord[]>([]);
   const [analysesList, setAnalysesList] = useState<AnalysisResult[]>([]);
+  const [personalAnalysesList, setPersonalAnalysesList] = useState<AnalysisResult[]>([]);
   
   // Navigation & Workflow state
   const [selectedResult, setSelectedResult] = useState<AnalysisResult | null>(null);
@@ -81,12 +86,13 @@ export default function App() {
   useEffect(() => {
     const authStatus = currentUser
       ? checkUserAuthorization(currentUser, strictDomainEnforcement)
-      : { isAuthorized: false };
+      : { isAuthorized: false, isRecruiter: false, role: 'PUBLIC_USER' };
 
     if (!currentUser || !authStatus.isAuthorized) {
       setJobsList([]);
       setCandidatesList([]);
       setAnalysesList([]);
+      setPersonalAnalysesList([]);
       setSelectedResult(null);
       setCandidatesToCompare(null);
       setJobForAnalysis(null);
@@ -96,30 +102,58 @@ export default function App() {
       return;
     }
 
-    const unsubJobs = subscribeToUserJobs(
-      currentUser.uid,
-      (jobs) => setJobsList(jobs),
-      (err) => console.error('Jobs subscription error:', err)
-    );
+    if (authStatus.isRecruiter) {
+      // Recruiter: subscribe to company jobs, candidates, and internal recruitment analyses
+      const unsubJobs = subscribeToUserJobs(
+        currentUser.uid,
+        (jobs) => setJobsList(jobs),
+        (err) => console.error('Jobs subscription error:', err)
+      );
 
-    const unsubCandidates = subscribeToUserCandidates(
-      currentUser.uid,
-      (candidates) => setCandidatesList(candidates),
-      (err) => console.error('Candidates subscription error:', err)
-    );
+      const unsubCandidates = subscribeToUserCandidates(
+        currentUser.uid,
+        (candidates) => setCandidatesList(candidates),
+        (err) => console.error('Candidates subscription error:', err)
+      );
 
-    const unsubAnalyses = subscribeToUserAnalyses(
-      currentUser.uid,
-      (analyses) => setAnalysesList(analyses),
-      (err) => console.error('Analyses subscription error:', err)
-    );
+      const unsubAnalyses = subscribeToUserAnalyses(
+        currentUser.uid,
+        (analyses) => setAnalysesList(analyses),
+        (err) => console.error('Analyses subscription error:', err)
+      );
 
-    return () => {
-      unsubJobs();
-      unsubCandidates();
-      unsubAnalyses();
-    };
+      return () => {
+        unsubJobs();
+        unsubCandidates();
+        unsubAnalyses();
+      };
+    } else {
+      // Public User: ONLY subscribe to dedicated personal analyses subcollection (/users/{userId}/analyses)
+      // Never attempt to query private company jobs, candidates, or analyses
+      const unsubPersonal = subscribeToUserPersonalAnalyses(
+        currentUser.uid,
+        (analyses) => setPersonalAnalysesList(analyses),
+        (err) => console.error('Personal analyses subscription error:', err)
+      );
+
+      return () => {
+        unsubPersonal();
+      };
+    }
   }, [currentUser, strictDomainEnforcement]);
+
+  // Ensure public users are routed to public tabs if currently on a recruiter tab
+  useEffect(() => {
+    if (currentUser) {
+      const authStatus = checkUserAuthorization(currentUser, strictDomainEnforcement);
+      if (!authStatus.isRecruiter) {
+        const recruiterTabs: TabType[] = ['overview', 'analytics', 'reminders', 'jobs', 'candidates'];
+        if (recruiterTabs.includes(activeTab)) {
+          setActiveTab('new-analysis');
+        }
+      }
+    }
+  }, [currentUser, strictDomainEnforcement, activeTab]);
 
   // Auth actions
   const handleSignIn = async () => {
@@ -130,6 +164,7 @@ export default function App() {
     setJobsList([]);
     setCandidatesList([]);
     setAnalysesList([]);
+    setPersonalAnalysesList([]);
     setSelectedResult(null);
     setCandidatesToCompare(null);
     setJobForAnalysis(null);
@@ -187,64 +222,89 @@ export default function App() {
     result: AnalysisResult,
     resumeFile: ResumeFile | null,
     _description: string,
-    job: Job
+    job?: Job | null
   ) => {
     setCachedResumeFile(resumeFile);
 
     if (currentUser) {
-      // 1. Generate candidate record with initial recorded screening activity event
-      const candidateId = `cand-${Date.now()}`;
-      const candidateName = result.candidateOverview.detectedName || resumeFile?.name || 'Candidate';
-      const actorName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Recruiter';
-      const actorEmail = currentUser.email || undefined;
+      const authStatus = checkUserAuthorization(currentUser, strictDomainEnforcement);
+      if (authStatus.isRecruiter && job) {
+        // 1. Generate candidate record with initial recorded screening activity event
+        const candidateId = `cand-${Date.now()}`;
+        const candidateName = result.candidateOverview.detectedName || resumeFile?.name || 'Candidate';
+        const actorName = currentUser.displayName || currentUser.email?.split('@')[0] || 'Recruiter';
+        const actorEmail = currentUser.email || undefined;
 
-      const initialEvent: CandidateActivityEvent = {
-        id: `act-analysis-${Date.now()}`,
-        type: 'analysis_completed',
-        title: 'Resume Screened & Analysis Completed',
-        timestamp: new Date().toISOString(),
-        actorName,
-        actorEmail,
-        details: `Screened for ${job.title} (${job.department}). Overall alignment: ${result.overallRoleAlignment.level}. File: ${resumeFile?.name || result.fileName}.`,
-        metadata: {
-          fileName: resumeFile?.name || result.fileName,
-          alignmentLevel: result.overallRoleAlignment.level,
+        const initialEvent: CandidateActivityEvent = {
+          id: `act-analysis-${Date.now()}`,
+          type: 'analysis_completed',
+          title: 'Resume Screened & Analysis Completed',
+          timestamp: new Date().toISOString(),
+          actorName,
+          actorEmail,
+          details: `Screened for ${job.title} (${job.department}). Overall alignment: ${result.overallRoleAlignment.level}. File: ${resumeFile?.name || result.fileName}.`,
+          metadata: {
+            fileName: resumeFile?.name || result.fileName,
+            alignmentLevel: result.overallRoleAlignment.level,
+            jobTitle: job.title,
+          },
+          source: 'recorded',
+        };
+        
+        const newCandidate: CandidateRecord = {
+          id: candidateId,
+          jobId: job.id,
           jobTitle: job.title,
-        },
-        source: 'recorded',
-      };
-      
-      const newCandidate: CandidateRecord = {
-        id: candidateId,
-        jobId: job.id,
-        jobTitle: job.title,
-        jobDepartment: job.department,
-        userId: currentUser.uid,
-        name: candidateName,
-        location: result.candidateOverview.detectedLocation,
-        currentRole: result.candidateOverview.currentOrRecentRole,
-        alignmentLevel: result.overallRoleAlignment.level,
-        analysisId: result.id,
-        analyzedAt: result.analyzedAt,
-        status: 'New',
-        interviews: [],
-        outreachLogs: [],
-        activityTimeline: [initialEvent],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+          jobDepartment: job.department,
+          userId: currentUser.uid,
+          name: candidateName,
+          location: result.candidateOverview.detectedLocation,
+          currentRole: result.candidateOverview.currentOrRecentRole,
+          alignmentLevel: result.overallRoleAlignment.level,
+          analysisId: result.id,
+          analyzedAt: result.analyzedAt,
+          status: 'New',
+          interviews: [],
+          outreachLogs: [],
+          activityTimeline: [initialEvent],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
 
-      try {
-        // Save candidate record
-        await saveCandidateToFirestore(newCandidate, currentUser);
-        // Save analysis linked to job and candidate
-        await saveAnalysisToFirestore(result, currentUser, job.id, candidateId);
-      } catch (err) {
-        console.error('Failed to persist analysis to Firestore:', err);
+        try {
+          // Save candidate record
+          await saveCandidateToFirestore(newCandidate, currentUser);
+          // Save analysis linked to job and candidate
+          await saveAnalysisToFirestore(result, currentUser, job.id, candidateId);
+        } catch (err) {
+          console.error('Failed to persist analysis to Firestore:', err);
+        }
+      } else {
+        // PUBLIC USER: Save strictly to personal analyses subcollection (/users/{userId}/analyses/{analysisId})
+        // NEVER save public users as internal company candidates or company analyses
+        try {
+          await savePersonalAnalysisToFirestore(result, currentUser);
+        } catch (err) {
+          console.error('Failed to persist personal analysis to Firestore:', err);
+        }
       }
     }
 
     setSelectedResult(result);
+  };
+
+  // Delete Personal Analysis Record (for public users)
+  const handleDeletePersonalAnalysis = async (analysisId: string) => {
+    if (!currentUser) return;
+    try {
+      await deletePersonalAnalysisFromFirestore(currentUser.uid, analysisId);
+      if (selectedResult && selectedResult.id === analysisId) {
+        setSelectedResult(null);
+        setActiveTab('my-analyses');
+      }
+    } catch (err) {
+      console.error('Failed to delete personal analysis:', err);
+    }
   };
 
   // Re-analyze action
@@ -781,19 +841,21 @@ export default function App() {
       {/* Top Bar Navigation */}
       <Header
         activeTab={activeTab}
+        userRole={authResult.role}
         onSelectTab={(tab) => {
           setSelectedResult(null);
           setCandidatesToCompare(null);
           setActiveTab(tab);
         }}
         onStartNewAnalysis={() => {
+          setSelectedResult(null);
           setCandidatesToCompare(null);
           handleStartNewAnalysis();
         }}
         currentUser={currentUser}
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
-        reminderCount={hiringReminders.length}
+        reminderCount={authResult.isRecruiter ? hiringReminders.length : 0}
       />
 
       {/* Main Viewport Content */}
@@ -816,30 +878,51 @@ export default function App() {
         ) : selectedResult ? (
           <AnalysisResults
             result={selectedResult}
-            candidateRecord={candidatesList.find(c => c.analysisId === selectedResult.id || c.id === selectedResult.id)}
+            candidateRecord={
+              authResult.isRecruiter
+                ? candidatesList.find((c) => c.analysisId === selectedResult.id || c.id === selectedResult.id)
+                : null
+            }
             jobs={jobsList}
             currentUserEmail={currentUser?.email || undefined}
             currentUserName={currentUser?.displayName || undefined}
-            onSaveOutreachLog={handleSaveCandidateOutreachLog}
-            onUpdateCandidateInterviews={handleUpdateCandidateInterviews}
-            onUpdateCandidateStatus={handleUpdateCandidateStatus}
+            onSaveOutreachLog={authResult.isRecruiter ? handleSaveCandidateOutreachLog : undefined}
+            onUpdateCandidateInterviews={authResult.isRecruiter ? handleUpdateCandidateInterviews : undefined}
+            onUpdateCandidateStatus={authResult.isRecruiter ? handleUpdateCandidateStatus : undefined}
             onModifyInputs={() => {
               setSelectedResult(null);
               setActiveTab('new-analysis');
             }}
             onStartNewAnalysis={handleStartNewAnalysis}
-            onReanalyze={handleReanalyze}
-            onDeleteAnalysis={handleDeleteAnalysis}
-            onBackToJob={(jobId) => {
-              setSelectedResult(null);
-              setActiveTab('jobs');
-            }}
-            onBackToCandidates={() => {
-              setSelectedResult(null);
-              setActiveTab('candidates');
-            }}
+            onReanalyze={authResult.isRecruiter ? handleReanalyze : undefined}
+            onDeleteAnalysis={authResult.isRecruiter ? handleDeleteAnalysis : handleDeletePersonalAnalysis}
+            onBackToJob={
+              authResult.isRecruiter
+                ? (jobId) => {
+                    setSelectedResult(null);
+                    setActiveTab('jobs');
+                  }
+                : undefined
+            }
+            onBackToCandidates={
+              authResult.isRecruiter
+                ? () => {
+                    setSelectedResult(null);
+                    setActiveTab('candidates');
+                  }
+                : undefined
+            }
+            onBackToAnalyses={
+              !authResult.isRecruiter
+                ? () => {
+                    setSelectedResult(null);
+                    setActiveTab('my-analyses');
+                  }
+                : undefined
+            }
           />
-        ) : (
+        ) : authResult.isRecruiter ? (
+          // ================= RECRUITER WORKSPACE TABS =================
           <>
             {activeTab === 'overview' && (
               <Dashboard
@@ -932,6 +1015,7 @@ export default function App() {
                   setActiveTab('jobs');
                 }}
                 initialResumeFile={cachedResumeFile}
+                isRecruiter={true}
               />
             )}
 
@@ -955,6 +1039,44 @@ export default function App() {
                 onClearInitialAction={() => setCandidateActionTarget(null)}
                 initialSelectedJobId={candidateFilterJobId}
                 onClearInitialJobFilter={() => setCandidateFilterJobId(null)}
+              />
+            )}
+
+            {activeTab === 'settings' && (
+              <SettingsView
+                currentUser={currentUser}
+                onSignIn={handleSignIn}
+                onSignOut={handleSignOut}
+                strictDomainEnforcement={strictDomainEnforcement}
+                onToggleStrictDomain={(val) => {
+                  setStrictDomainEnforcement(val);
+                  localStorage.setItem('mihora_strict_domain', String(val));
+                }}
+              />
+            )}
+          </>
+        ) : (
+          // ================= PUBLIC USER WORKSPACE TABS =================
+          <>
+            {activeTab === 'new-analysis' && (
+              <NewAnalysis
+                jobs={[]}
+                onAnalysisCompleted={handleAnalysisCompleted}
+                onCancel={() => {
+                  setSelectedResult(null);
+                  setActiveTab('my-analyses');
+                }}
+                initialResumeFile={cachedResumeFile}
+                isRecruiter={false}
+              />
+            )}
+
+            {(activeTab === 'my-analyses' || activeTab === 'overview' || activeTab === 'candidates' || activeTab === 'jobs' || activeTab === 'analytics' || activeTab === 'reminders') && (
+              <MyAnalysesView
+                analyses={personalAnalysesList}
+                onSelectAnalysis={handleViewAnalysisResult}
+                onStartNewAnalysis={handleStartNewAnalysis}
+                onDeleteAnalysis={handleDeletePersonalAnalysis}
               />
             )}
 

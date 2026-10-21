@@ -262,6 +262,73 @@
         }
       },
       "required": ["userId", "email", "role", "createdAt"]
+    },
+    "PersonalAnalysis": {
+      "title": "PersonalAnalysis",
+      "description": "Personal resume analysis and evidence verification document strictly owned by an authenticated user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique evaluation record ID."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Authentication UID of the owner."
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Uploaded resume document name."
+        },
+        "jobTitle": {
+          "type": "string",
+          "description": "Target job title analyzed against."
+        },
+        "department": {
+          "type": "string",
+          "description": "Target department or domain."
+        },
+        "extractedSummary": {
+          "type": "string",
+          "description": "Extracted summary of target role requirements."
+        },
+        "alignmentLevel": {
+          "type": "string",
+          "description": "Qualitative alignment level.",
+          "enum": [
+            "Strong alignment",
+            "Good alignment",
+            "Moderate alignment",
+            "Limited evidence",
+            "Insufficient evidence"
+          ]
+        },
+        "alignmentSummary": {
+          "type": "string",
+          "description": "Qualitative rationale for overall alignment."
+        },
+        "hasLimitedInformation": {
+          "type": "boolean",
+          "description": "Flag indicating if resume contains sparse information."
+        },
+        "analyzedAt": {
+          "type": "string",
+          "description": "Human-readable timestamp of when analysis occurred."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "fileName",
+        "jobTitle",
+        "alignmentLevel",
+        "analyzedAt",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -276,6 +343,12 @@
         "$ref": "#/entities/UserProfile"
       },
       "description": "Recruiter profile records isolated by user ID."
+    },
+    "/users/{userId}/analyses/{analysisId}": {
+      "schema": {
+        "$ref": "#/entities/PersonalAnalysis"
+      },
+      "description": "Personal resume screening evaluations strictly isolated to the owning public user."
     },
     "/jobs/{jobId}": {
       "schema": {
