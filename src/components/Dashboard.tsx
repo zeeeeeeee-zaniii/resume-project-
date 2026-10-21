@@ -63,6 +63,51 @@ export const Dashboard: React.FC<DashboardProps> = ({
     );
   }, [reminders]);
 
+  const hiringVelocity = useMemo(() => {
+    // Candidates who reached Interview stage
+    const interviewCandidates = candidates.filter((c) => {
+      const isInterview = c.status === 'Interview' || (c.interviews && c.interviews.length > 0);
+      if (!isInterview) return false;
+      if (!c.createdAt || !c.updatedAt) return false;
+      const createdTime = new Date(c.createdAt).getTime();
+      const updatedTime = new Date(c.updatedAt).getTime();
+      return !isNaN(createdTime) && !isNaN(updatedTime) && updatedTime >= createdTime;
+    });
+
+    if (interviewCandidates.length === 0) {
+      return {
+        formatted: '—',
+        detail: 'No candidates in interview yet',
+        count: 0,
+      };
+    }
+
+    const totalDiffMs = interviewCandidates.reduce((sum, c) => {
+      const createdTime = new Date(c.createdAt).getTime();
+      const updatedTime = new Date(c.updatedAt).getTime();
+      return sum + (updatedTime - createdTime);
+    }, 0);
+
+    const avgDiffMs = totalDiffMs / interviewCandidates.length;
+    const avgDays = avgDiffMs / (1000 * 60 * 60 * 24);
+
+    if (avgDays < 1) {
+      const avgHours = Math.round(avgDiffMs / (1000 * 60 * 60));
+      return {
+        formatted: avgHours <= 1 ? '< 1 day' : `${avgHours} hrs`,
+        detail: `New → Interview (${interviewCandidates.length} candidate${interviewCandidates.length === 1 ? '' : 's'})`,
+        count: interviewCandidates.length,
+      };
+    }
+
+    const formattedDays = avgDays >= 10 ? Math.round(avgDays) : avgDays.toFixed(1);
+    return {
+      formatted: `${formattedDays} ${Number(formattedDays) === 1 ? 'day' : 'days'}`,
+      detail: `New → Interview (${interviewCandidates.length} candidate${interviewCandidates.length === 1 ? '' : 's'})`,
+      count: interviewCandidates.length,
+    };
+  }, [candidates]);
+
   return (
     <div className="space-y-8 pb-16">
       {/* Welcome Banner */}
@@ -130,7 +175,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* Real Metrics Banner (no fake numbers) */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-6 pt-6 border-t border-slate-100">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-6 pt-6 border-t border-slate-100">
           <div className="p-3.5 bg-slate-50/80 rounded-lg border border-slate-200/70">
             <div className="text-xs text-slate-500 font-medium">Active Job Requisitions</div>
             <div className="text-2xl font-bold text-slate-900 mt-1">{openJobs.length}</div>
@@ -152,6 +197,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="text-2xl font-bold text-emerald-700 mt-1">{strongAlignments}</div>
             <div className="text-[11px] text-slate-400 mt-0.5">
               Fully verified against core role criteria
+            </div>
+          </div>
+
+          <div className="p-3.5 bg-slate-50/80 rounded-lg border border-slate-200/70">
+            <div className="text-xs text-slate-500 font-medium flex items-center justify-between">
+              <span>Hiring Velocity</span>
+              <Clock className="w-3.5 h-3.5 text-blue-600" />
+            </div>
+            <div className="text-2xl font-bold text-slate-900 mt-1">{hiringVelocity.formatted}</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              {hiringVelocity.detail}
             </div>
           </div>
 

@@ -4,7 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import mammoth from 'mammoth';
-import { PDFParse } from 'pdf-parse';
+import PDFParser from 'pdf2json';
 
 dotenv.config();
 
@@ -59,7 +59,7 @@ export const checkUserRateLimit = (uid: string): { allowed: boolean; retryAfterS
 };
 
 // Periodic cleanup of stale rate-limit records
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of userRateLimitMap.entries()) {
     if (now > entry.resetTime) {
@@ -67,6 +67,9 @@ setInterval(() => {
     }
   }
 }, 60000);
+if (typeof cleanupInterval.unref === 'function') {
+  cleanupInterval.unref();
+}
 
 // Concurrency Limiter & Queue to safely support concurrent users without quota exhaustion
 const MAX_CONCURRENT_ANALYSES = 8;
@@ -392,6 +395,50 @@ export async function parseRequestBody(req: any): Promise<any> {
 }
 
 /**
+ * Safely extracts raw text from a PDF Buffer using pure Node-compatible pdf2json.
+ * Does not depend on canvas, @napi-rs/canvas, DOMMatrix, or browser graphics APIs.
+ */
+export function extractPdfText(
+  fileBuffer: Buffer
+): Promise<{ text: string; isPasswordProtected?: boolean }> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve({ text: '' });
+    }, 10000);
+
+    try {
+      const pdfParser = new (PDFParser as any)(null, true);
+
+      pdfParser.on('pdfParser_dataReady', () => {
+        clearTimeout(timeout);
+        try {
+          const rawText = pdfParser.getRawTextContent() || '';
+          resolve({ text: rawText.trim() });
+        } catch {
+          resolve({ text: '' });
+        }
+      });
+
+      pdfParser.on('pdfParser_dataError', (errData: any) => {
+        clearTimeout(timeout);
+        const errString = String(errData?.parserError || errData || '');
+        const isPassword =
+          errString.toLowerCase().includes('password') ||
+          errString.toLowerCase().includes('encrypt');
+        console.warn('PDF parsing event note:', errString);
+        resolve({ text: '', isPasswordProtected: isPassword });
+      });
+
+      pdfParser.parseBuffer(fileBuffer);
+    } catch (err: any) {
+      clearTimeout(timeout);
+      console.warn('PDF parser exception note:', err?.message || err);
+      resolve({ text: '' });
+    }
+  });
+}
+
+/**
  * Core resume analysis handler compatible with both Express and Vercel Serverless Functions
  */
 export async function handleAnalyzeResumeRequest(req: any, res: any) {
@@ -562,19 +609,15 @@ export async function handleAnalyzeResumeRequest(req: any, res: any) {
       }
 
       try {
-        const parser = new PDFParse({ data: fileBuffer });
-        const pdfResult = await parser.getText();
-        pdfExtractedText = pdfResult && pdfResult.text ? pdfResult.text.trim() : '';
-      } catch (pdfErr: any) {
-        console.warn('PDF text pre-extraction note:', pdfErr?.message || pdfErr);
-        if (
-          pdfErr?.message?.toLowerCase().includes('password') ||
-          pdfErr?.name === 'PasswordException'
-        ) {
+        const parseResult = await extractPdfText(fileBuffer);
+        if (parseResult.isPasswordProtected) {
           return res.status(400).json({
             error: 'This PDF document is password-protected. Please upload an unprotected copy of the resume.',
           });
         }
+        pdfExtractedText = parseResult.text || '';
+      } catch (pdfErr: any) {
+        console.warn('PDF text pre-extraction note:', pdfErr?.message || pdfErr);
       }
 
       if (!isValidPdfHeader && !pdfExtractedText) {
