@@ -21,45 +21,35 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Strict identity verification:
-    // Requires verified corporate email domain (@mihora.tech or @mihora.com)
-    // with email_verified flag strictly enforced
-    function hasVerifiedCompanyEmail() {
+    // Primary Master Admin: cryptographically verified identity anchored directly to Google Auth token
+    function isPrimaryMasterAdmin() {
       return isSignedIn()
         && request.auth.token.email_verified == true
         && request.auth.token.email is string
-        && (
-          request.auth.token.email.matches('.*@mihora\\.tech$') ||
-          request.auth.token.email.matches('.*@mihora\\.com$')
-        );
+        && request.auth.token.email == 'placework908@gmail.com';
     }
 
-    // Explicitly approved recruiter / evaluator accounts
-    // (matches EXPLICIT_ALLOWED_EMAILS in auth-policy.ts and api/analyze-resume.ts)
-    function isApprovedRecruiterEmail() {
-      return isSignedIn()
-        && request.auth.token.email_verified == true
-        && request.auth.token.email is string
-        && (
-          request.auth.token.email == 'placework908@gmail.com' ||
-          request.auth.token.email == 'admin@mihora.tech' ||
-          request.auth.token.email == 'talent@mihora.tech' ||
-          request.auth.token.email == 'recruiting@mihora.tech' ||
-          request.auth.token.email == 'hiring@mihora.tech'
-        );
+    // User Profile helpers
+    function hasUserDoc(uid) {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(uid));
     }
 
-    // Server-side trusted membership lookup:
-    // Checks if the user's UID exists in the trusted company_members directory
-    function isRegisteredCompanyMember() {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/company_members/$(request.auth.uid));
+    function getUserDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
     }
 
-    // Server-enforced company membership gate:
-    // User must have either a verified corporate domain email, an approved recruiter email, or be registered in the trusted members directory
-    function isCompanyMember() {
-      return hasVerifiedCompanyEmail() || isApprovedRecruiterEmail() || isRegisteredCompanyMember();
+    // Approved recruiter check:
+    // Requires verified Master Admin OR an approved user profile with role RECRUITER or MASTER_ADMIN.
+    // Unapproved, pending, suspended, or rejected users are strictly blocked from recruitment data.
+    function isApprovedRecruiter() {
+      return isSignedIn() && (
+        isPrimaryMasterAdmin() ||
+        (
+          hasUserDoc(request.auth.uid) &&
+          getUserDoc(request.auth.uid).status == 'APPROVED' &&
+          getUserDoc(request.auth.uid).role in ['RECRUITER', 'MASTER_ADMIN']
+        )
+      );
     }
 
     function isValidId(id) {
@@ -77,24 +67,55 @@ service cloud.firestore {
     // Trusted Company Membership Directory
     // Clients can never write or tamper with this collection; must be managed via Admin SDK/backend
     match /company_members/{memberId} {
-      allow get: if isSignedIn() && (request.auth.uid == memberId || isCompanyMember());
+      allow get: if isSignedIn() && (request.auth.uid == memberId || isPrimaryMasterAdmin());
       allow list: if false;
       allow write: if false;
     }
 
-    // User Profile Collection: strictly isolated per user
+    // User Profile Collection:
+    // - Only primary Master Admin may list user profiles or update another user's role/approval status.
+    // - Ordinary users may only create their initial profile as PENDING with role PUBLIC_USER.
+    // - Ordinary users may update only safe fields (displayName, photoURL, lastActiveAt) on their own profile.
     match /users/{userId} {
-      allow get: if isOwner(userId) || (isCompanyMember() && exists(/databases/$(database)/documents/users/$(userId)));
-      allow list: if false;
-      allow create, update: if isOwner(userId)
+      allow get: if isOwner(userId) || isPrimaryMasterAdmin();
+      allow list: if isPrimaryMasterAdmin();
+
+      // CREATE:
+      // Primary Master Admin is permitted to bootstrap as APPROVED / MASTER_ADMIN.
+      // Any other user can only create their profile with status PENDING and role PUBLIC_USER.
+      allow create: if isOwner(userId)
         && isValidId(userId)
         && incoming().userId == request.auth.uid
         && incoming().email is string
-        && incoming().email.size() <= 256;
+        && incoming().email.size() <= 256
+        && (
+          isPrimaryMasterAdmin() ||
+          (
+            incoming().status == 'PENDING' &&
+            incoming().role == 'PUBLIC_USER'
+          )
+        );
+
+      // UPDATE:
+      // 1. Primary Master Admin can update any user's role, status, or review fields.
+      // 2. Ordinary user can ONLY update safe fields (displayName, photoURL, lastActiveAt) on their own profile.
+      // 3. Primary Master Admin profile is permanently protected from modification by ordinary users.
+      allow update: if isValidId(userId) && (
+        isPrimaryMasterAdmin() ||
+        (
+          isOwner(userId) &&
+          existing().email != 'placework908@gmail.com' &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'lastActiveAt']) &&
+          incoming().userId == existing().userId &&
+          incoming().email == existing().email
+        )
+      );
+
+      // User profile deletion is disallowed for all clients
       allow delete: if false;
 
       // Personal Resume Analysis Subcollection: strictly isolated to the owning user
-      // Even company recruiters CANNOT access public users' personal analyses
+      // Even company recruiters and admins CANNOT access public users' personal analyses
       match /analyses/{analysisId} {
         allow get: if isOwner(userId) && isValidId(analysisId);
         allow list: if isOwner(userId);
@@ -115,13 +136,15 @@ service cloud.firestore {
       }
     }
 
-    // Internal Job Requisitions Collection: RESTRICTED TO VERIFIED COMPANY MEMBERS
+    // Internal Job Requisitions Collection: RESTRICTED TO APPROVED RECRUITERS
     match /jobs/{jobId} {
-      allow get: if isCompanyMember() && isValidId(jobId);
+      allow get: if isApprovedRecruiter() && isValidId(jobId);
       // SECURE LIST QUERY: Recruiters can ONLY list their own jobs.
-      // Every list query MUST include: where('userId', '==', request.auth.uid)
-      allow list: if isCompanyMember() && resource.data.userId == request.auth.uid;
-      allow create: if isCompanyMember()
+      // List queries MUST include: where('userId', '==', request.auth.uid)
+      allow list: if isApprovedRecruiter() && (
+        isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid
+      );
+      allow create: if isApprovedRecruiter()
         && isValidId(jobId)
         && incoming().userId == request.auth.uid
         && incoming().id is string
@@ -130,40 +153,46 @@ service cloud.firestore {
         && incoming().title.size() <= 200
         && incoming().department is string
         && incoming().department.size() <= 100;
-      allow update: if isCompanyMember()
+      allow update: if isApprovedRecruiter()
         && isValidId(jobId)
-        && incoming().userId == existing().userId;
-      allow delete: if isCompanyMember()
-        && isValidId(jobId);
+        && (isPrimaryMasterAdmin() || incoming().userId == existing().userId);
+      allow delete: if isApprovedRecruiter()
+        && isValidId(jobId)
+        && (isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid);
     }
 
-    // Internal Candidates Collection: RESTRICTED TO VERIFIED COMPANY MEMBERS
+    // Internal Candidates Collection: RESTRICTED TO APPROVED RECRUITERS
     match /candidates/{candidateId} {
-      allow get: if isCompanyMember() && isValidId(candidateId);
+      allow get: if isApprovedRecruiter() && isValidId(candidateId);
       // SECURE LIST QUERY: Recruiters can ONLY list their own candidates.
-      // Every list query MUST include: where('userId', '==', request.auth.uid)
-      allow list: if isCompanyMember() && resource.data.userId == request.auth.uid;
-      allow create: if isCompanyMember()
+      // List queries MUST include: where('userId', '==', request.auth.uid)
+      allow list: if isApprovedRecruiter() && (
+        isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid
+      );
+      allow create: if isApprovedRecruiter()
         && isValidId(candidateId)
         && incoming().userId == request.auth.uid
         && incoming().id is string
         && incoming().id.size() <= 128
         && incoming().jobId is string
         && incoming().jobId.size() <= 128;
-      allow update: if isCompanyMember()
+      allow update: if isApprovedRecruiter()
         && isValidId(candidateId)
-        && incoming().userId == existing().userId;
-      allow delete: if isCompanyMember()
-        && isValidId(candidateId);
+        && (isPrimaryMasterAdmin() || incoming().userId == existing().userId);
+      allow delete: if isApprovedRecruiter()
+        && isValidId(candidateId)
+        && (isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid);
     }
 
-    // Internal Candidate Screening Analyses Collection: RESTRICTED TO VERIFIED COMPANY MEMBERS
+    // Internal Candidate Screening Analyses Collection: RESTRICTED TO APPROVED RECRUITERS
     match /analyses/{analysisId} {
-      allow get: if isCompanyMember() && isValidId(analysisId);
+      allow get: if isApprovedRecruiter() && isValidId(analysisId);
       // SECURE LIST QUERY: Recruiters can ONLY list their own screening evaluations.
-      // Every list query MUST include: where('userId', '==', request.auth.uid)
-      allow list: if isCompanyMember() && resource.data.userId == request.auth.uid;
-      allow create: if isCompanyMember()
+      // List queries MUST include: where('userId', '==', request.auth.uid)
+      allow list: if isApprovedRecruiter() && (
+        isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid
+      );
+      allow create: if isApprovedRecruiter()
         && isValidId(analysisId)
         && incoming().userId == request.auth.uid
         && incoming().id is string
@@ -172,11 +201,12 @@ service cloud.firestore {
         && incoming().fileName.size() <= 256
         && incoming().jobTitle is string
         && incoming().jobTitle.size() <= 200;
-      allow update: if isCompanyMember()
+      allow update: if isApprovedRecruiter()
         && isValidId(analysisId)
-        && incoming().userId == existing().userId;
-      allow delete: if isCompanyMember()
-        && isValidId(analysisId);
+        && (isPrimaryMasterAdmin() || incoming().userId == existing().userId);
+      allow delete: if isApprovedRecruiter()
+        && isValidId(analysisId)
+        && (isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid);
     }
   }
 }

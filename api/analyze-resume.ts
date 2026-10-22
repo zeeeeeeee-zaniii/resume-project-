@@ -9,9 +9,10 @@ import PDFParser from 'pdf2json';
 dotenv.config();
 
 // Firebase configuration cache
-let firebaseConfig: { projectId: string; apiKey?: string } = {
+let firebaseConfig: { projectId: string; apiKey?: string; firestoreDatabaseId?: string } = {
   projectId: process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0699486567',
   apiKey: process.env.FIREBASE_API_KEY || '',
+  firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID || '',
 };
 
 // Attempt to load firebase-applet-config.json from project root
@@ -25,7 +26,11 @@ try {
       const rawConfig = fs.readFileSync(cfgPath, 'utf8');
       const parsed = JSON.parse(rawConfig);
       if (parsed.projectId) {
-        firebaseConfig = parsed;
+        firebaseConfig = {
+          projectId: parsed.projectId,
+          apiKey: parsed.apiKey || firebaseConfig.apiKey,
+          firestoreDatabaseId: parsed.firestoreDatabaseId || firebaseConfig.firestoreDatabaseId,
+        };
         break;
       }
     }
@@ -301,6 +306,103 @@ export async function verifyFirebaseIdToken(
   };
 }
 
+export const PRIMARY_MASTER_ADMIN_EMAIL = 'placework908@gmail.com';
+
+export interface ServerUserProfile {
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+  role: 'MASTER_ADMIN' | 'RECRUITER' | 'PUBLIC_USER';
+  suspensionReason?: string;
+  exists: boolean;
+}
+
+/**
+ * Authoritatively retrieves the caller's Firestore user profile using the caller's verified Firebase ID token.
+ * Uses the official Google Cloud Firestore REST API (v1).
+ * Security rules in Firestore are evaluated natively against the caller's authenticated UID.
+ */
+export async function fetchServerUserProfile(
+  uid: string,
+  idToken: string,
+  projectId: string,
+  firestoreDatabaseId?: string
+): Promise<{ success: boolean; profile?: ServerUserProfile; error?: string }> {
+  try {
+    const dbId =
+      firestoreDatabaseId && firestoreDatabaseId.trim() ? firestoreDatabaseId.trim() : '(default)';
+    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+      projectId
+    )}/databases/${encodeURIComponent(dbId)}/documents/users/${encodeURIComponent(uid)}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        Accept: 'application/json',
+      },
+    });
+
+    if (response.status === 404) {
+      // User profile has not yet been initialized in Firestore -> defaults to PENDING PUBLIC_USER
+      return {
+        success: true,
+        profile: {
+          status: 'PENDING',
+          role: 'PUBLIC_USER',
+          exists: false,
+        },
+      };
+    }
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      return {
+        success: false,
+        error: `Firestore profile lookup failed with HTTP ${response.status}: ${errText.slice(0, 180)}`,
+      };
+    }
+
+    const docData = (await response.json()) as any;
+    const fields = docData?.fields || {};
+
+    const rawStatus = fields.status?.stringValue;
+    const rawRole = fields.role?.stringValue;
+    const rawSuspensionReason = fields.suspensionReason?.stringValue;
+
+    let status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED' = 'PENDING';
+    if (
+      rawStatus === 'APPROVED' ||
+      rawStatus === 'SUSPENDED' ||
+      rawStatus === 'REJECTED' ||
+      rawStatus === 'PENDING'
+    ) {
+      status = rawStatus;
+    } else if (rawRole === 'RECRUITER' || rawRole === 'MASTER_ADMIN') {
+      // Backward compatibility for existing pre-migration recruiter records
+      status = 'APPROVED';
+    }
+
+    let role: 'MASTER_ADMIN' | 'RECRUITER' | 'PUBLIC_USER' = 'PUBLIC_USER';
+    if (rawRole === 'MASTER_ADMIN' || rawRole === 'RECRUITER' || rawRole === 'PUBLIC_USER') {
+      role = rawRole;
+    }
+
+    return {
+      success: true,
+      profile: {
+        status,
+        role,
+        suspensionReason: rawSuspensionReason,
+        exists: true,
+      },
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: `Network exception during Firestore profile lookup: ${err?.message || err}`,
+    };
+  }
+}
+
 // Corporate domain & access policy configuration
 const ALLOWED_CORPORATE_DOMAINS = ['mihora.tech', 'mihora.com'];
 const EXPLICIT_ALLOWED_EMAILS = [
@@ -474,10 +576,64 @@ export async function handleAnalyzeResumeRequest(req: any, res: any) {
     });
   }
 
-  // Authorization check: all cryptographically verified Firebase users are authorized for resume analysis.
-  // Corporate authorization status is verified to protect internal recruiter operations.
-  const authz = checkCorporateAuthorization(verification.user);
-  const isRecruiter = authz.authorized;
+  // Check primary Master Admin identity directly from cryptographically verified Firebase ID token
+  const callerEmail = (verification.user.email || '').toLowerCase().trim();
+  const isPrimaryAdmin =
+    callerEmail === PRIMARY_MASTER_ADMIN_EMAIL && Boolean(verification.user.emailVerified);
+
+  let userStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED' = 'PENDING';
+  let userRole: 'MASTER_ADMIN' | 'RECRUITER' | 'PUBLIC_USER' = 'PUBLIC_USER';
+  let suspensionReason: string | undefined;
+  let profileLookupSucceeded = false;
+
+  if (isPrimaryAdmin) {
+    // Primary Master Admin is unconditionally APPROVED with MASTER_ADMIN privileges
+    userStatus = 'APPROVED';
+    userRole = 'MASTER_ADMIN';
+    profileLookupSucceeded = true;
+  } else {
+    // Authoritatively check the caller's current Firestore user profile status
+    const profileResult = await fetchServerUserProfile(
+      verification.user.uid,
+      idToken,
+      firebaseConfig.projectId,
+      firebaseConfig.firestoreDatabaseId
+    );
+
+    if (profileResult.success && profileResult.profile) {
+      profileLookupSucceeded = true;
+      userStatus = profileResult.profile.status;
+      userRole = profileResult.profile.role;
+      suspensionReason = profileResult.profile.suspensionReason;
+    } else {
+      console.warn(
+        `Server-side Firestore profile lookup note for user ${verification.user.uid}:`,
+        profileResult.error
+      );
+    }
+  }
+
+  // 1. Block SUSPENDED users before pipeline starts
+  if (userStatus === 'SUSPENDED') {
+    return res.status(403).json({
+      error:
+        suspensionReason ||
+        'Account suspended. Your access to Mihora Resume Intelligence has been suspended by a workspace administrator.',
+    });
+  }
+
+  // 2. Block REJECTED users before pipeline starts
+  if (userStatus === 'REJECTED') {
+    return res.status(403).json({
+      error:
+        'Access request declined. Your access request was reviewed and declined by a workspace administrator.',
+    });
+  }
+
+  // Approved recruiter eligibility: verified primary Master Admin or approved recruiter/admin in Firestore
+  const isApprovedRecruiter =
+    isPrimaryAdmin ||
+    (userStatus === 'APPROVED' && (userRole === 'RECRUITER' || userRole === 'MASTER_ADMIN'));
 
   // User-ID-based rate limiter
   const rateCheck = checkUserRateLimit(verification.user.uid);
@@ -554,10 +710,25 @@ export async function handleAnalyzeResumeRequest(req: any, res: any) {
       effectiveJobDescription = `Target Role: ${effectiveJobTitle}. Analyze candidate qualifications, core competencies, relevant work history, and alignment with industry standards for this position.`;
     }
 
-    // Only authorized corporate recruiters can link an analysis to an internal company job requisition
-    const effectiveJobId = isRecruiter && typeof jobId === 'string' && jobId.trim()
-      ? jobId.trim()
-      : undefined;
+    // Validate internal job requisition access:
+    // Only approved recruiters or Master Admin can link an analysis to an internal company job requisition
+    const hasJobId = typeof jobId === 'string' && jobId.trim().length > 0;
+    if (hasJobId) {
+      if (!profileLookupSucceeded) {
+        return res.status(403).json({
+          error:
+            'Unable to verify recruiter authorization status. Please try again or analyze without linking to an internal job requisition.',
+        });
+      }
+      if (!isApprovedRecruiter) {
+        return res.status(403).json({
+          error:
+            'Access forbidden: Linking analysis to internal company job requisitions requires an approved recruiter account.',
+        });
+      }
+    }
+
+    const effectiveJobId = isApprovedRecruiter && hasJobId ? jobId.trim() : undefined;
 
     // 2. Validation: Resume base64 payload required
     if (!fileBase64 || typeof fileBase64 !== 'string' || fileBase64.trim().length === 0) {

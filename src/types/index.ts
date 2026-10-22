@@ -1,5 +1,71 @@
-export type UserRole = 'RECRUITER' | 'PUBLIC_USER';
-export type TabType = 'overview' | 'analytics' | 'reminders' | 'jobs' | 'candidates' | 'settings' | 'new-analysis' | 'my-analyses';
+export type UserApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+
+export type UserRole = 'MASTER_ADMIN' | 'RECRUITER' | 'PUBLIC_USER';
+export type TabType = 
+  | 'overview' 
+  | 'analytics' 
+  | 'reminders' 
+  | 'jobs' 
+  | 'candidates' 
+  | 'settings' 
+  | 'new-analysis' 
+  | 'my-analyses'
+  | 'admin';
+
+export interface UserProfile {
+  userId: string;
+  email: string;
+  displayName?: string;
+  photoURL?: string;
+  role?: UserRole;
+  status?: UserApprovalStatus;
+  companyId?: string;
+  companyName?: string;
+  requestedRole?: UserRole;
+  requestedAt?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  suspensionReason?: string;
+  createdAt: string;
+  lastActiveAt?: string;
+}
+
+export type CompanyStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+
+export interface CompanyWorkspace {
+  id: string;
+  name: string;
+  domains?: string[];
+  status: CompanyStatus;
+  description?: string;
+  createdAt: string;
+  updatedAt?: string;
+  createdById?: string;
+  createdByEmail?: string;
+  settings?: {
+    allowPublicSubmissions?: boolean;
+    requireApprovalForDomain?: boolean;
+  };
+}
+
+export interface AccessRequestRecord {
+  id: string;
+  userId: string;
+  email: string;
+  displayName?: string;
+  status: UserApprovalStatus;
+  requestedRole?: UserRole;
+  assignedRole?: UserRole;
+  requestedCompanyId?: string;
+  assignedCompanyId?: string;
+  requestedAt: string;
+  reviewedAt?: string;
+  reviewedByUid?: string;
+  reviewedByEmail?: string;
+  rejectionReason?: string;
+  suspensionReason?: string;
+  notes?: string;
+}
 
 export type ReminderCategory = 'upcoming_interview' | 'overdue_interview' | 'missing_feedback' | 'stalled_stage';
 
@@ -39,6 +105,7 @@ export type JobStatus = 'Draft' | 'Open' | 'On Hold' | 'Closed';
 export interface Job {
   id: string;
   userId: string;
+  companyId?: string;
   title: string;
   department: string;
   description: string;
@@ -120,6 +187,7 @@ export interface CandidateActivityEvent {
 export interface CandidateRecord {
   id: string;
   jobId: string;
+  companyId?: string;
   jobTitle: string;
   jobDepartment: string;
   userId: string;
@@ -262,6 +330,7 @@ export interface AnalysisResult {
   jobId?: string;
   candidateId?: string;
   userId?: string;
+  companyId?: string;
   analyzedAt: string;
   fileName: string;
   candidateOverview: CandidateOverview;

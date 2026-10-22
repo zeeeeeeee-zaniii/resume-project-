@@ -11,6 +11,7 @@ import {
   doc, 
   setDoc, 
   updateDoc,
+  getDoc,
   getDocFromServer,
   collection, 
   query, 
@@ -21,7 +22,8 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { AnalysisResult, Job, CandidateRecord } from '../types';
+import { AnalysisResult, Job, CandidateRecord, UserProfile, UserRole, UserApprovalStatus } from '../types';
+import { PRIMARY_MASTER_ADMIN_EMAIL, ALLOWED_COMPANY_DOMAINS } from './auth-policy';
 
 // Initialize Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
@@ -117,18 +119,248 @@ export async function signOutUser(): Promise<void> {
   }
 }
 
-// Save/update user profile in /users/{userId}
-export async function saveUserProfile(user: User) {
+// Save/update user profile in /users/{userId} with non-destructive status retention
+export async function saveUserProfile(user: User): Promise<UserProfile | null> {
   const path = `users/${user.uid}`;
   try {
-    await setDoc(doc(db, 'users', user.uid), cleanUndefinedFields({
-      userId: user.uid,
-      email: user.email || '',
-      displayName: user.displayName || user.email?.split('@')[0] || 'User',
-      createdAt: new Date().toISOString(),
-    }), { merge: true });
+    const userDocRef = doc(db, 'users', user.uid);
+    const existingSnap = await getDoc(userDocRef);
+
+    const email = (user.email || '').toLowerCase().trim();
+    const isPrimaryAdmin = email === PRIMARY_MASTER_ADMIN_EMAIL;
+    const now = new Date().toISOString();
+
+    if (existingSnap.exists()) {
+      // Existing profile: RETAIN existing role, status, companyId, and approvedAt!
+      const existingData = existingSnap.data();
+
+      // Primary admin is guaranteed MASTER_ADMIN role and APPROVED status
+      const role: UserRole = isPrimaryAdmin ? 'MASTER_ADMIN' : (existingData.role || 'PUBLIC_USER');
+      const status: UserApprovalStatus = isPrimaryAdmin ? 'APPROVED' : (existingData.status || 'PENDING');
+
+      const updates: Record<string, any> = cleanUndefinedFields({
+        displayName: user.displayName || existingData.displayName || email.split('@')[0] || 'User',
+        photoURL: user.photoURL || existingData.photoURL || undefined,
+        lastActiveAt: now,
+        ...(isPrimaryAdmin ? { role: 'MASTER_ADMIN', status: 'APPROVED' } : {}),
+      });
+
+      await updateDoc(userDocRef, updates);
+
+      return {
+        userId: user.uid,
+        email: existingData.email || email,
+        displayName: updates.displayName || existingData.displayName || 'User',
+        photoURL: updates.photoURL || existingData.photoURL,
+        role: isPrimaryAdmin ? 'MASTER_ADMIN' : (existingData.role || role),
+        status: isPrimaryAdmin ? 'APPROVED' : (existingData.status || status),
+        companyId: existingData.companyId || (isPrimaryAdmin ? 'mihora-tech' : undefined),
+        companyName: existingData.companyName || (isPrimaryAdmin ? 'Mihora Tech' : undefined),
+        requestedRole: existingData.requestedRole,
+        requestedAt: existingData.requestedAt,
+        approvedAt: existingData.approvedAt,
+        approvedBy: existingData.approvedBy,
+        suspensionReason: existingData.suspensionReason,
+        createdAt: existingData.createdAt || now,
+        lastActiveAt: now,
+      };
+    } else {
+      // Brand new user profile: defaults to PENDING
+      const isCompanyDomain = ALLOWED_COMPANY_DOMAINS.includes(email.split('@')[1] || '');
+      const initialRole: UserRole = isPrimaryAdmin ? 'MASTER_ADMIN' : 'PUBLIC_USER';
+      const initialStatus: UserApprovalStatus = isPrimaryAdmin ? 'APPROVED' : 'PENDING';
+      const requestedRole: UserRole = isCompanyDomain ? 'RECRUITER' : 'PUBLIC_USER';
+
+      const newProfile: UserProfile = cleanUndefinedFields({
+        userId: user.uid,
+        email,
+        displayName: user.displayName || email.split('@')[0] || 'User',
+        photoURL: user.photoURL || undefined,
+        role: initialRole,
+        status: initialStatus,
+        companyId: isPrimaryAdmin ? 'mihora-tech' : undefined,
+        companyName: isPrimaryAdmin ? 'Mihora Tech' : undefined,
+        requestedRole: isPrimaryAdmin ? 'MASTER_ADMIN' : requestedRole,
+        requestedAt: now,
+        ...(isPrimaryAdmin ? { approvedAt: now, approvedBy: 'SYSTEM_BOOTSTRAP' } : {}),
+        createdAt: now,
+        lastActiveAt: now,
+      });
+
+      await setDoc(userDocRef, newProfile);
+      return newProfile;
+    }
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    console.warn('Note: Profile write deferred or restricted:', error);
+    return null;
+  }
+}
+
+// Fetch single user profile from /users/{userId}
+export async function getUserProfile(userId: string): Promise<UserProfile | null> {
+  const path = `users/${userId}`;
+  try {
+    const snap = await getDoc(doc(db, 'users', userId));
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    return {
+      userId: data.userId || userId,
+      email: data.email || '',
+      displayName: data.displayName || 'User',
+      photoURL: data.photoURL,
+      role: data.role || 'PUBLIC_USER',
+      status: data.status || 'PENDING',
+      companyId: data.companyId,
+      companyName: data.companyName,
+      requestedRole: data.requestedRole,
+      requestedAt: data.requestedAt,
+      approvedAt: data.approvedAt,
+      approvedBy: data.approvedBy,
+      suspensionReason: data.suspensionReason,
+      createdAt: data.createdAt || new Date().toISOString(),
+      lastActiveAt: data.lastActiveAt,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+    return null;
+  }
+}
+
+// Realtime subscription for user profile
+export function subscribeToUserProfile(
+  userId: string,
+  onData: (profile: UserProfile | null) => void,
+  onError?: (err: any) => void
+) {
+  const path = `users/${userId}`;
+  try {
+    return onSnapshot(
+      doc(db, 'users', userId),
+      (docSnap) => {
+        if (!docSnap.exists()) {
+          onData(null);
+          return;
+        }
+        const data = docSnap.data();
+        onData({
+          userId: data.userId || userId,
+          email: data.email || '',
+          displayName: data.displayName || 'User',
+          photoURL: data.photoURL,
+          role: data.role || 'PUBLIC_USER',
+          status: data.status || 'PENDING',
+          companyId: data.companyId,
+          companyName: data.companyName,
+          requestedRole: data.requestedRole,
+          requestedAt: data.requestedAt,
+          approvedAt: data.approvedAt,
+          approvedBy: data.approvedBy,
+          suspensionReason: data.suspensionReason,
+          createdAt: data.createdAt || new Date().toISOString(),
+          lastActiveAt: data.lastActiveAt,
+        });
+      },
+      (error) => {
+        console.warn('UserProfile subscription note:', error);
+        if (onError) onError(error);
+      }
+    );
+  } catch (error) {
+    console.warn('UserProfile subscription setup note:', error);
+    return () => {};
+  }
+}
+
+// Realtime subscription to all user profiles for Master Admin
+export function subscribeToUsers(
+  onData: (users: UserProfile[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = 'users';
+  try {
+    const q = query(collection(db, path));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const users: UserProfile[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          users.push({
+            userId: data.userId || docSnap.id,
+            email: data.email || '',
+            displayName: data.displayName || 'User',
+            photoURL: data.photoURL,
+            role: data.role || 'PUBLIC_USER',
+            status: data.status || 'PENDING',
+            companyId: data.companyId,
+            companyName: data.companyName,
+            requestedRole: data.requestedRole,
+            requestedAt: data.requestedAt,
+            approvedAt: data.approvedAt,
+            approvedBy: data.approvedBy,
+            suspensionReason: data.suspensionReason,
+            createdAt: data.createdAt || new Date().toISOString(),
+            lastActiveAt: data.lastActiveAt,
+          });
+        });
+        // Sort: PENDING first, then newest first
+        users.sort((a, b) => {
+          if (a.status === 'PENDING' && b.status !== 'PENDING') return -1;
+          if (a.status !== 'PENDING' && b.status === 'PENDING') return 1;
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+        });
+        onData(users);
+      },
+      (error) => {
+        console.warn('Users collection query note:', error);
+        if (onError) onError(error);
+      }
+    );
+  } catch (error) {
+    console.warn('Users subscription setup error:', error);
+    if (onError) onError(error);
+    return () => {};
+  }
+}
+
+// Update user approval status and role (Master Admin action)
+export async function updateUserStatusAndRole(
+  targetUserId: string,
+  updates: {
+    status: UserApprovalStatus;
+    role?: UserRole;
+    suspensionReason?: string;
+    adminEmail: string;
+  }
+): Promise<void> {
+  const path = `users/${targetUserId}`;
+  try {
+    const userDocRef = doc(db, 'users', targetUserId);
+    const snap = await getDoc(userDocRef);
+    if (!snap.exists()) {
+      throw new Error('User profile does not exist.');
+    }
+    const existing = snap.data();
+    // Protect primary Master Admin from being modified, suspended, or demoted
+    if (existing.email?.toLowerCase().trim() === PRIMARY_MASTER_ADMIN_EMAIL) {
+      throw new Error('The primary Master Admin account is permanently protected and cannot be modified.');
+    }
+
+    const now = new Date().toISOString();
+    const payload: Record<string, any> = cleanUndefinedFields({
+      status: updates.status,
+      ...(updates.role ? { role: updates.role } : {}),
+      ...(updates.status === 'APPROVED' ? { approvedAt: now, approvedBy: updates.adminEmail, suspensionReason: null } : {}),
+      ...(updates.status === 'SUSPENDED' ? { suspensionReason: updates.suspensionReason || 'Account suspended by Master Admin' } : {}),
+      ...(updates.status === 'REJECTED' ? { rejectionReason: updates.suspensionReason || 'Access request rejected' } : {}),
+      reviewedAt: now,
+      reviewedBy: updates.adminEmail,
+    });
+
+    await updateDoc(userDocRef, payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+    throw error;
   }
 }
 

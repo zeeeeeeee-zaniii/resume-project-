@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TabType, AnalysisResult, ResumeFile, Job, CandidateRecord, CandidateOutreachLog, CandidateActivityEvent } from './types';
+import { TabType, AnalysisResult, ResumeFile, Job, CandidateRecord, CandidateOutreachLog, CandidateActivityEvent, UserProfile } from './types';
 import { formatOutreachTemplateLabel } from './lib/timeline-helpers';
 import { Header, MihoraLogo } from './components/Header';
 import { Dashboard } from './components/Dashboard';
@@ -12,6 +12,7 @@ import { CandidatesView } from './components/CandidatesView';
 import { RemindersView } from './components/RemindersView';
 import { SettingsView } from './components/SettingsView';
 import { MyAnalysesView } from './components/MyAnalysesView';
+import { MasterAdminDashboard } from './components/MasterAdminDashboard';
 import { computeHiringReminders } from './lib/reminder-helpers';
 import { SignInView } from './components/SignInView';
 import { UnauthorizedView } from './components/UnauthorizedView';
@@ -21,6 +22,8 @@ import {
   testConnection, 
   signInWithGoogle, 
   signOutUser, 
+  saveUserProfile,
+  subscribeToUserProfile,
   saveJobToFirestore,
   updateJobInFirestore,
   deleteJobFromFirestore,
@@ -42,6 +45,7 @@ import { Loader2 } from 'lucide-react';
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [strictDomainEnforcement, setStrictDomainEnforcement] = useState(() => {
     const saved = localStorage.getItem('mihora_strict_domain');
@@ -70,23 +74,49 @@ export default function App() {
     return computeHiringReminders(candidatesList, jobsList, analysesList);
   }, [candidatesList, jobsList, analysesList]);
 
-  // Initialize and check connection on boot
+  // Initialize, subscribe to user profile, and check connection on boot
   useEffect(() => {
     testConnection();
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    let unsubProfile: (() => void) | null = null;
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       setIsAuthReady(true);
+
+      if (unsubProfile) {
+        unsubProfile();
+        unsubProfile = null;
+      }
+
+      if (user) {
+        // Safe profile write/sync
+        try {
+          await saveUserProfile(user);
+        } catch (profileErr) {
+          console.warn('Note: Profile write note:', profileErr);
+        }
+
+        // Realtime subscription to the user's profile document in Firestore
+        unsubProfile = subscribeToUserProfile(user.uid, (profile) => {
+          setUserProfile(profile);
+        });
+      } else {
+        setUserProfile(null);
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      if (unsubProfile) unsubProfile();
+      unsubscribe();
+    };
   }, []);
 
   // Listen to Firestore Jobs, Candidates, and Analyses when authenticated and authorized
   useEffect(() => {
     const authStatus = currentUser
-      ? checkUserAuthorization(currentUser, strictDomainEnforcement)
-      : { isAuthorized: false, isRecruiter: false, role: 'PUBLIC_USER' };
+      ? checkUserAuthorization(currentUser, userProfile, strictDomainEnforcement)
+      : { isAuthorized: false, isRecruiter: false, role: 'PUBLIC_USER', status: 'PENDING', isMasterAdmin: false };
 
     if (!currentUser || !authStatus.isAuthorized) {
       setJobsList([]);
@@ -102,8 +132,8 @@ export default function App() {
       return;
     }
 
-    if (authStatus.isRecruiter) {
-      // Recruiter: subscribe to company jobs, candidates, and internal recruitment analyses
+    if (authStatus.isRecruiter && authStatus.status === 'APPROVED') {
+      // Approved Recruiter or Master Admin: subscribe to company jobs, candidates, and internal recruitment analyses
       const unsubJobs = subscribeToUserJobs(
         currentUser.uid,
         (jobs) => setJobsList(jobs),
@@ -128,7 +158,7 @@ export default function App() {
         unsubAnalyses();
       };
     } else {
-      // Public User: ONLY subscribe to dedicated personal analyses subcollection (/users/{userId}/analyses)
+      // Public User or Pending: ONLY subscribe to dedicated personal analyses subcollection (/users/{userId}/analyses)
       // Never attempt to query private company jobs, candidates, or analyses
       const unsubPersonal = subscribeToUserPersonalAnalyses(
         currentUser.uid,
@@ -140,20 +170,24 @@ export default function App() {
         unsubPersonal();
       };
     }
-  }, [currentUser, strictDomainEnforcement]);
+  }, [currentUser, userProfile, strictDomainEnforcement]);
 
-  // Ensure public users are routed to public tabs if currently on a recruiter tab
+  // Ensure public, pending, or non-admin users are routed away from restricted tabs
   useEffect(() => {
     if (currentUser) {
-      const authStatus = checkUserAuthorization(currentUser, strictDomainEnforcement);
-      if (!authStatus.isRecruiter) {
+      const authStatus = checkUserAuthorization(currentUser, userProfile, strictDomainEnforcement);
+      if (activeTab === 'admin' && !authStatus.isMasterAdmin) {
+        setActiveTab(authStatus.isRecruiter ? 'overview' : 'new-analysis');
+        return;
+      }
+      if (!authStatus.isRecruiter || authStatus.status !== 'APPROVED') {
         const recruiterTabs: TabType[] = ['overview', 'analytics', 'reminders', 'jobs', 'candidates'];
         if (recruiterTabs.includes(activeTab)) {
           setActiveTab('new-analysis');
         }
       }
     }
-  }, [currentUser, strictDomainEnforcement, activeTab]);
+  }, [currentUser, userProfile, strictDomainEnforcement, activeTab]);
 
   // Auth actions
   const handleSignIn = async () => {
@@ -171,6 +205,7 @@ export default function App() {
     setCachedResumeFile(null);
     setCandidateActionTarget(null);
     setCandidateFilterJobId(null);
+    setUserProfile(null);
     setActiveTab('overview');
     await signOutUser();
   };
@@ -227,7 +262,7 @@ export default function App() {
     setCachedResumeFile(resumeFile);
 
     if (currentUser) {
-      const authStatus = checkUserAuthorization(currentUser, strictDomainEnforcement);
+      const authStatus = checkUserAuthorization(currentUser, userProfile, strictDomainEnforcement);
       if (authStatus.isRecruiter && job) {
         // 1. Generate candidate record with initial recorded screening activity event
         const candidateId = `cand-${Date.now()}`;
@@ -825,7 +860,7 @@ export default function App() {
     return <SignInView onSignIn={handleSignIn} />;
   }
 
-  const authResult = checkUserAuthorization(currentUser, strictDomainEnforcement);
+  const authResult = checkUserAuthorization(currentUser, userProfile, strictDomainEnforcement);
   if (!authResult.isAuthorized) {
     return (
       <UnauthorizedView
@@ -860,7 +895,9 @@ export default function App() {
 
       {/* Main Viewport Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 print:max-w-none print:w-full print:p-0 print:m-0">
-        {candidatesToCompare ? (
+        {activeTab === 'admin' && authResult.isMasterAdmin ? (
+          <MasterAdminDashboard currentUser={currentUser} />
+        ) : candidatesToCompare ? (
           <CandidateComparison
             candidates={candidatesToCompare}
             candidateRecords={candidatesList}

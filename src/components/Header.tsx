@@ -3,6 +3,8 @@ import { TabType, UserRole } from '../types';
 import { User } from 'firebase/auth';
 import { LogIn, LogOut, User as UserIcon, Menu, X, Shield, Sparkles, Briefcase, CalendarClock, Users } from 'lucide-react';
 
+import { PRIMARY_MASTER_ADMIN_EMAIL } from '../lib/auth-policy';
+
 interface HeaderProps {
   activeTab: TabType;
   onSelectTab: (tab: TabType) => void;
@@ -98,7 +100,8 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, [isMobileMenuOpen]);
 
-  const isRecruiter = userRole === 'RECRUITER';
+  const isMasterAdmin = (currentUser?.email?.toLowerCase().trim() === PRIMARY_MASTER_ADMIN_EMAIL) || userRole === 'MASTER_ADMIN';
+  const isRecruiter = userRole === 'RECRUITER' || isMasterAdmin;
 
   // Role-specific navigation items
   const navItems: { id: TabType; label: string; badge?: number }[] = isRecruiter
@@ -109,11 +112,13 @@ export const Header: React.FC<HeaderProps> = ({
         { id: 'jobs', label: 'Jobs' },
         { id: 'candidates', label: 'Candidates' },
         { id: 'settings', label: 'Settings' },
+        ...(isMasterAdmin ? [{ id: 'admin' as TabType, label: 'Master Admin' }] : []),
       ]
     : [
         { id: 'new-analysis', label: 'Analyze Resume' },
         { id: 'my-analyses', label: 'My Analyses' },
         { id: 'settings', label: 'Settings' },
+        ...(isMasterAdmin ? [{ id: 'admin' as TabType, label: 'Master Admin' }] : []),
       ];
 
   const handleNavClick = (tab: TabType) => {
@@ -162,7 +167,12 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-medium text-slate-500">
-                  {isRecruiter ? (
+                  {userRole === 'MASTER_ADMIN' ? (
+                    <span className="text-purple-700 font-semibold flex items-center gap-1">
+                      <Shield className="w-3 h-3 text-purple-600" />
+                      <span>Master Admin</span>
+                    </span>
+                  ) : isRecruiter ? (
                     <span className="text-blue-700 font-semibold flex items-center gap-1">
                       <Shield className="w-3 h-3 text-blue-600" />
                       <span>Recruiter Workspace</span>
@@ -284,12 +294,14 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span
                     className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                      isRecruiter
+                      userRole === 'MASTER_ADMIN'
+                        ? 'bg-purple-50 text-purple-700 border-purple-200'
+                        : isRecruiter
                         ? 'bg-blue-50 text-blue-700 border-blue-200'
                         : 'bg-slate-100 text-slate-700 border-slate-200'
                     }`}
                   >
-                    {isRecruiter ? 'Recruiter' : 'Public'}
+                    {userRole === 'MASTER_ADMIN' ? 'Master Admin' : isRecruiter ? 'Recruiter' : 'Public'}
                   </span>
                   <button
                     onClick={() => {
