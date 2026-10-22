@@ -39,6 +39,7 @@ export const MasterAdminDashboard: React.FC<MasterAdminDashboardProps> = ({
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('ALL');
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
 
   // Confirmation modal state
   const [actionConfirm, setActionConfirm] = useState<{
