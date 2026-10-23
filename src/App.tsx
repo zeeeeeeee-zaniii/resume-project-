@@ -37,10 +37,11 @@ import {
   subscribeToUserAnalyses,
   savePersonalAnalysisToFirestore,
   deletePersonalAnalysisFromFirestore,
-  subscribeToUserPersonalAnalyses
+  subscribeToUserPersonalAnalyses,
+  resendVerificationEmail
 } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -189,9 +190,34 @@ export default function App() {
     }
   }, [currentUser, userProfile, strictDomainEnforcement, activeTab]);
 
+  // Email verification resend state
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [verificationFeedback, setVerificationFeedback] = useState<string | null>(null);
+
+  const handleResendVerificationEmail = async () => {
+    if (!currentUser) return;
+    setIsResendingVerification(true);
+    setVerificationFeedback(null);
+    try {
+      await resendVerificationEmail(currentUser);
+      setVerificationFeedback(`Verification link sent to ${currentUser.email}! Please check your inbox.`);
+      setTimeout(() => setVerificationFeedback(null), 6000);
+    } catch (err: any) {
+      console.error('Verification resend failed:', err);
+      setVerificationFeedback('Failed to resend verification email. Please try again later.');
+      setTimeout(() => setVerificationFeedback(null), 6000);
+    } finally {
+      setIsResendingVerification(false);
+    }
+  };
+
   // Auth actions
   const handleSignIn = async () => {
-    await signInWithGoogle();
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      console.warn('Sign-in modal requested or error:', err);
+    }
   };
 
   const handleSignOut = async () => {
@@ -892,6 +918,33 @@ export default function App() {
         onSignOut={handleSignOut}
         reminderCount={authResult.isRecruiter ? hiringReminders.length : 0}
       />
+
+      {/* Unverified Email Warning Banner */}
+      {currentUser && !currentUser.emailVerified && (
+        <div className="bg-amber-50 border-b border-amber-200/90 text-amber-900 px-4 py-2 text-xs print:hidden">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                Your email address (<strong>{currentUser.email}</strong>) is not yet verified. Please verify your email via the link sent to your inbox.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {verificationFeedback ? (
+                <span className="font-semibold text-emerald-700">{verificationFeedback}</span>
+              ) : (
+                <button
+                  onClick={handleResendVerificationEmail}
+                  disabled={isResendingVerification}
+                  className="px-2.5 py-1 text-[11px] font-semibold text-amber-900 bg-amber-100 hover:bg-amber-200 rounded border border-amber-300 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {isResendingVerification ? 'Sending...' : 'Resend Verification Email'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Viewport Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 print:max-w-none print:w-full print:p-0 print:m-0">

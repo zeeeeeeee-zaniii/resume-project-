@@ -4,7 +4,15 @@ import {
   GoogleAuthProvider, 
   signInWithPopup, 
   signOut,
-  User 
+  User,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  updateProfile,
+  EmailAuthProvider,
+  linkWithCredential,
+  linkWithPopup
 } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -92,22 +100,147 @@ export async function testConnection() {
   }
 }
 
-// Sign in with Google Popup (accepts any valid Google account)
-export async function signInWithGoogle(): Promise<User | null> {
-  try {
-    const result = await signInWithPopup(auth, googleProvider);
-    if (result.user) {
-      try {
-        await saveUserProfile(result.user);
-      } catch (profileErr) {
-        console.warn('Note: Profile write deferred or restricted:', profileErr);
+// User-friendly error message translator for Firebase Authentication error codes
+export function getAuthErrorMessage(error: any): string {
+  if (!error) return 'An unexpected authentication error occurred.';
+  const code = error.code || (typeof error === 'string' ? error : '');
+  const message = error.message || '';
+
+  switch (code) {
+    case 'auth/invalid-email':
+      return 'Please enter a valid email address.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Please contact a Mihora administrator.';
+    case 'auth/user-not-found':
+      return 'No account was found with this email. Please verify your email or create a new account.';
+    case 'auth/wrong-password':
+      return 'Incorrect password. Please verify your credentials or click "Forgot Password?".';
+    case 'auth/invalid-credential':
+      return 'Invalid email or password. Please verify your credentials and try again.';
+    case 'auth/email-already-in-use':
+      return 'An account already exists with this email address. If you registered using Google, please sign in with Google.';
+    case 'auth/weak-password':
+      return 'Password is too weak. Please use at least 6 characters.';
+    case 'auth/operation-not-allowed':
+      return 'Email/Password authentication is not currently enabled in Firebase Console. Please verify that Email/Password provider is enabled under Firebase Authentication > Sign-in method.';
+    case 'auth/too-many-requests':
+      return 'Too many unsuccessful attempts. Access has been temporarily restricted for security. Please try again later or reset your password.';
+    case 'auth/network-request-failed':
+      return 'Network connection error. Please check your internet connection and try again.';
+    case 'auth/account-exists-with-different-credential':
+      return 'An account already exists with this email address under a different sign-in provider (e.g. Google). Please sign in using your existing provider.';
+    case 'auth/credential-already-in-use':
+      return 'This credential is already linked to another user account.';
+    case 'auth/requires-recent-login':
+      return 'This sensitive operation requires recent authentication. Please sign out and sign in again before linking.';
+    case 'auth/popup-closed-by-user':
+      return 'The Google authentication window was closed before completing sign in.';
+    case 'auth/popup-blocked':
+      return 'The authentication popup was blocked by your browser. Please allow popups for this site.';
+    default:
+      if (message.includes('INVALID_LOGIN_CREDENTIALS')) {
+        return 'Invalid email or password. Please verify your credentials and try again.';
       }
-    }
-    return result.user;
-  } catch (error) {
-    console.error('Google Sign-in failed:', error);
-    return null;
+      return message || 'Authentication failed. Please try again.';
   }
+}
+
+// Sign in with Google Popup (accepts any valid Google account)
+export async function signInWithGoogle(): Promise<User> {
+  const result = await signInWithPopup(auth, googleProvider);
+  if (result.user) {
+    try {
+      await saveUserProfile(result.user);
+    } catch (profileErr) {
+      console.warn('Note: Profile write deferred or restricted:', profileErr);
+    }
+  }
+  return result.user;
+}
+
+// Sign in with Email and Password
+export async function signInWithEmail(email: string, password: string): Promise<User> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const result = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+  if (result.user) {
+    try {
+      await saveUserProfile(result.user);
+    } catch (profileErr) {
+      console.warn('Note: Profile write deferred or restricted:', profileErr);
+    }
+  }
+  return result.user;
+}
+
+// Sign up with Email and Password
+export async function signUpWithEmail(
+  email: string,
+  password: string,
+  displayName?: string
+): Promise<User> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const result = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+  const user = result.user;
+
+  if (displayName && displayName.trim()) {
+    try {
+      await updateProfile(user, { displayName: displayName.trim() });
+    } catch (updateErr) {
+      console.warn('Note: Display name update deferred:', updateErr);
+    }
+  }
+
+  // Send verification email to newly registered email accounts
+  try {
+    await sendEmailVerification(user);
+  } catch (verifyErr) {
+    console.warn('Note: Verification email send note:', verifyErr);
+  }
+
+  // Save new user profile (defaults to PENDING status and PUBLIC_USER role)
+  try {
+    await saveUserProfile(user);
+  } catch (profileErr) {
+    console.warn('Note: Profile write deferred or restricted:', profileErr);
+  }
+
+  return user;
+}
+
+// Send Password Reset Email
+export async function sendPasswordReset(email: string): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+  await sendPasswordResetEmail(auth, normalizedEmail);
+}
+
+// Resend Email Verification to user
+export async function resendVerificationEmail(user?: User | null): Promise<void> {
+  const targetUser = user || auth.currentUser;
+  if (!targetUser) {
+    throw new Error('No authenticated user session found to send verification email.');
+  }
+  await sendEmailVerification(targetUser);
+}
+
+// Securely link password credential to an existing authenticated account (e.g. Google user adding password)
+export async function linkPasswordToCurrentUser(password: string): Promise<User> {
+  const user = auth.currentUser;
+  if (!user || !user.email) {
+    throw new Error('You must be signed in with a verified email address to link password credentials.');
+  }
+  const credential = EmailAuthProvider.credential(user.email, password);
+  const result = await linkWithCredential(user, credential);
+  return result.user;
+}
+
+// Securely link Google account to an existing authenticated user
+export async function linkGoogleToCurrentUser(): Promise<User> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('You must be signed in to link a Google account.');
+  }
+  const result = await linkWithPopup(user, googleProvider);
+  return result.user;
 }
 
 // Sign out
@@ -116,6 +249,7 @@ export async function signOutUser(): Promise<void> {
     await signOut(auth);
   } catch (error) {
     console.error('Sign-out failed:', error);
+    throw error;
   }
 }
 
