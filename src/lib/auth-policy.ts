@@ -68,6 +68,19 @@ export function checkUserAuthorization(
 
   // 1. Primary Master Admin check (anchored directly to verified email)
   if (email === PRIMARY_MASTER_ADMIN_EMAIL) {
+    if (!user.emailVerified) {
+      return {
+        role: 'PUBLIC_USER',
+        status: 'PENDING',
+        isMasterAdmin: false,
+        isRecruiter: false,
+        isAuthorized: false,
+        reason: 'Master Admin email must be verified before administrative access is granted.',
+        userEmail: email,
+        domain,
+        isCompanyMember: false,
+      };
+    }
     return {
       role: 'MASTER_ADMIN',
       status: 'APPROVED',

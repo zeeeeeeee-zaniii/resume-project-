@@ -155,7 +155,7 @@ service cloud.firestore {
         && incoming().department.size() <= 100;
       allow update: if isApprovedRecruiter()
         && isValidId(jobId)
-        && (isPrimaryMasterAdmin() || incoming().userId == existing().userId);
+        && (isPrimaryMasterAdmin() || (existing().userId == request.auth.uid && incoming().userId == existing().userId));
       allow delete: if isApprovedRecruiter()
         && isValidId(jobId)
         && (isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid);
@@ -178,7 +178,7 @@ service cloud.firestore {
         && incoming().jobId.size() <= 128;
       allow update: if isApprovedRecruiter()
         && isValidId(candidateId)
-        && (isPrimaryMasterAdmin() || incoming().userId == existing().userId);
+        && (isPrimaryMasterAdmin() || (existing().userId == request.auth.uid && incoming().userId == existing().userId));
       allow delete: if isApprovedRecruiter()
         && isValidId(candidateId)
         && (isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid);
@@ -203,7 +203,7 @@ service cloud.firestore {
         && incoming().jobTitle.size() <= 200;
       allow update: if isApprovedRecruiter()
         && isValidId(analysisId)
-        && (isPrimaryMasterAdmin() || incoming().userId == existing().userId);
+        && (isPrimaryMasterAdmin() || (existing().userId == request.auth.uid && incoming().userId == existing().userId));
       allow delete: if isApprovedRecruiter()
         && isValidId(analysisId)
         && (isPrimaryMasterAdmin() || resource.data.userId == request.auth.uid);
